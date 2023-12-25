@@ -201,8 +201,8 @@ int main(int argc, char* argv[])
 
 	//server
 	serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr(argv[1]);
-    serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_addr.s_addr = inet_addr(argv[1]);
+	serv_addr.sin_port = htons(PORT);
 
 	//Create a socket
 	sockt = socket(AF_INET, SOCK_DGRAM, 0);
@@ -256,7 +256,7 @@ int main(int argc, char* argv[])
 			static uint8_t dst_call[10]={0};
 			static uint8_t src_call[10]={0};
 
-			if(m17stream.fn==0)
+			if(m17stream.fn==0) //update LSF at FN=0
 			{
 				m17stream.lsf.dst=0;
 				m17stream.lsf.src=0;
@@ -264,12 +264,22 @@ int main(int argc, char* argv[])
 					m17stream.lsf.dst|=((uint64_t)rx_buff[6+i]<<((5-i)*8));
 				for(uint8_t i=0; i<6; i++)
 					m17stream.lsf.src|=((uint64_t)rx_buff[12+i]<<((5-i)*8));
+				
+				m17stream.lsf.type=((uint16_t)rx_buff[18]<<8)|rx_buff[19];
+
+				memset((uint8_t*)m17stream.lsf.meta, 0, 14);
+				for(uint8_t i=0; i<14; i++)
+					m17stream.lsf.meta[i]=rx_buff[20+i];
 
 				decode_callsign(dst_call, m17stream.lsf.dst);
 				decode_callsign(src_call, m17stream.lsf.src);
 			}
 			
-			printf("SID: %04X FN: %d DST: %s SRC: %s\n", m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call);
+			printf("SID: %04X FN: %d DST: %s SRC: %s TYPE: %04X META: ",
+					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, m17stream.lsf.type);
+			for(uint8_t i=0; i<14; i++)
+				printf("%02X", m17stream.lsf.meta[i]);
+			printf("\n");
 
 			//write(fd, "hello!\n", 7);
 
