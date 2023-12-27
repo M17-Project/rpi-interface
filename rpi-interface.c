@@ -1,14 +1,15 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdint.h>
+#include <math.h>
 
-#include<netinet/ip_icmp.h>
-#include<netinet/udp.h>
-#include<netinet/tcp.h>
-#include<netinet/ip.h>
-#include<sys/socket.h>
-#include<arpa/inet.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/udp.h>
+#include <netinet/tcp.h>
+#include <netinet/ip.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include <fcntl.h> 
 #include <termios.h>
@@ -55,6 +56,8 @@ uint64_t enc_callsign=0;
 uint8_t cmd[8];
 
 //UART magic
+int fd; //UART handle
+
 int set_interface_attribs (int fd, int speed, int parity)
 {
 	struct termios tty;
@@ -194,6 +197,47 @@ uint8_t encode_callsign(uint64_t* out, const uint8_t* inp)
     return 0;
 }
 
+//device config funcs
+void dev_set_rx_freq(uint32_t freq)
+{
+	uint8_t cmd[6];
+	cmd[0]=CMD_SET_RX_FREQ;		//RX freq
+	cmd[1]=6;
+	*((uint32_t*)&cmd[2])=freq;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+}
+
+void dev_set_tx_freq(uint32_t freq)
+{
+	uint8_t cmd[6];
+	cmd[0]=CMD_SET_TX_FREQ;		//TX freq
+	cmd[1]=6;
+	*((uint32_t*)&cmd[2])=freq;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+}
+
+void dev_set_freq_corr(int16_t corr)
+{
+	uint8_t cmd[4];
+	cmd[0]=CMD_SET_FREQ_CORR;	//freq correction
+	cmd[1]=4;
+	*((int16_t*)&cmd[2])=corr;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+}
+
+void dev_set_tx_power(float power) //powr in dBm
+{
+	uint8_t cmd[3];
+	cmd[0]=CMD_SET_TX_POWER;	//transmit power
+	cmd[1]=3;
+	cmd[2]=roundf(power*4.0f);
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+}
+
 int main(int argc, char* argv[])
 {
 	if(argc<4)
@@ -229,34 +273,15 @@ int main(int argc, char* argv[])
 
 	printf("done\n");
 
-	int fd=open((char*)"/dev/ttyS0", O_RDWR | O_NOCTTY | O_SYNC);
+	fd=open((char*)"/dev/ttyS0", O_RDWR | O_NOCTTY | O_SYNC);
 	set_blocking(fd, 0);
 	set_interface_attribs(fd, B460800, 0);
 
 	//config the device
-	cmd[0]=CMD_SET_RX_FREQ;		//RX freq
-	cmd[1]=6;
-	*((uint32_t*)&cmd[2])=433475000U;
-	write(fd, cmd, cmd[1]);
-	usleep(10000);
-
-	cmd[0]=CMD_SET_TX_FREQ;		//TX freq
-	cmd[1]=6;
-	*((uint32_t*)&cmd[2])=435000000U;
-	write(fd, cmd, cmd[1]);
-	usleep(10000);
-
-	cmd[0]=CMD_SET_FREQ_CORR;	//freq offset
-	cmd[1]=4;
-	*((int16_t*)&cmd[2])=-9;
-	write(fd, cmd, cmd[1]);
-	usleep(10000);
-
-	cmd[0]=CMD_SET_TX_POWER;	//transmit power
-	cmd[1]=4;
-	cmd[2]=37*4;
-	write(fd, cmd, cmd[1]);
-	usleep(10000);
+	dev_set_rx_freq(433475000U);
+	dev_set_tx_freq(435000000U);
+	dev_set_freq_corr(-9);
+	dev_set_tx_power(37.0f);
 
 	while(1)
 	{
