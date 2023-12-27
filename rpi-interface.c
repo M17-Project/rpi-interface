@@ -14,6 +14,8 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "interface_cmds.h"
+
 #define PORT 17000
 #define MAX_UDP_LEN 65535
 
@@ -48,6 +50,9 @@ struct m17stream_t
 } m17stream;
 
 uint64_t enc_callsign=0;
+
+//device stuff
+uint8_t cmd[8];
 
 //UART magic
 int set_interface_attribs (int fd, int speed, int parity)
@@ -228,6 +233,31 @@ int main(int argc, char* argv[])
 	set_blocking(fd, 0);
 	set_interface_attribs(fd, B460800, 0);
 
+	//config the device
+	cmd[0]=CMD_SET_RX_FREQ;		//RX freq
+	cmd[1]=6;
+	*((uint32_t*)&cmd[2])=433475000U;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+
+	cmd[0]=CMD_SET_TX_FREQ;		//TX freq
+	cmd[1]=6;
+	*((uint32_t*)&cmd[2])=435000000U;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+
+	cmd[0]=CMD_SET_FREQ_CORR;	//freq offset
+	cmd[1]=4;
+	*((int16_t*)&cmd[2])=-9;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+
+	cmd[0]=CMD_SET_TX_POWER;	//transmit power
+	cmd[1]=4;
+	cmd[2]=37*4;
+	write(fd, cmd, cmd[1]);
+	usleep(10000);
+
 	while(1)
 	{
 		//Receive a packet
@@ -273,6 +303,11 @@ int main(int argc, char* argv[])
 
 				decode_callsign(dst_call, m17stream.lsf.dst);
 				decode_callsign(src_call, m17stream.lsf.src);
+
+				//test, short TX
+				cmd[0]=7;
+				cmd[1]=2;
+				write(fd, cmd, cmd[1]);
 			}
 			
 			printf("SID: %04X FN: %d DST: %s SRC: %s TYPE: %04X META: ",
@@ -280,8 +315,6 @@ int main(int argc, char* argv[])
 			for(uint8_t i=0; i<14; i++)
 				printf("%02X", m17stream.lsf.meta[i]);
 			printf("\n");
-
-			//write(fd, "hello!\n", 7);
 
 			if(m17stream.fn&0x8000U)
 				printf("Stream end\n");
