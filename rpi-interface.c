@@ -22,7 +22,7 @@
 
 //internet
 struct sockaddr_in source, dest; 
-int16_t sockt;
+int32_t sockt;
 uint32_t saddr_size, data_size;
 struct iphdr *iph;
 struct sockaddr_in saddr;
@@ -31,7 +31,7 @@ struct sockaddr_in serv_addr;
 
 uint8_t tx_buff[512]={0};
 uint8_t rx_buff[65536]={0};
-int16_t tx_len=0, rx_len=0;
+int32_t tx_len=0, rx_len=0;
 
 //M17
 struct lsf_t
@@ -50,6 +50,8 @@ struct m17stream_t
 	uint8_t pld[16];
 } m17stream;
 
+//config stuff
+uint8_t cfg_uart[64]={0}, cfg_call[15]={0}, cfg_module[5]={0};
 uint64_t enc_callsign=0;
 
 //device stuff
@@ -58,7 +60,7 @@ uint8_t cmd[8];
 //UART magic
 int fd; //UART handle
 
-int set_interface_attribs (int fd, int speed, int parity)
+int set_interface_attribs(int fd, int speed, int parity)
 {
 	struct termios tty;
 	if (tcgetattr (fd, &tty) != 0)
@@ -78,7 +80,7 @@ int set_interface_attribs (int fd, int speed, int parity)
 									// no canonical processing
 	tty.c_oflag = 0;                // no remapping, no delays
 	tty.c_cc[VMIN]  = 0;            // read doesn't block
-	tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
+	tty.c_cc[VTIME] = 0;            // 0.0 seconds read timeout
 
 	tty.c_iflag &= ~(IXON | IXOFF | IXANY); // shut off xon/xoff ctrl
 
@@ -98,7 +100,7 @@ int set_interface_attribs (int fd, int speed, int parity)
 	return 0;
 }
 
-void set_blocking (int fd, int should_block)
+void set_blocking(int fd, int should_block)
 {
 	struct termios tty;
 	memset (&tty, 0, sizeof tty);
@@ -113,6 +115,19 @@ void set_blocking (int fd, int should_block)
 
 	if (tcsetattr (fd, TCSANOW, &tty) != 0)
 		;//error_message ("error %d setting term attributes", errno);
+}
+
+//string
+void rtrim(uint8_t* inp)
+{
+	for(uint8_t i=0; i<strlen((char*)inp); i++)
+	{
+		if(inp[i]<' ')
+		{
+			inp[i]=0;
+			break;
+		}
+	}
 }
 
 //M17 stuff
@@ -240,13 +255,55 @@ void dev_set_tx_power(float power) //powr in dBm
 
 int main(int argc, char* argv[])
 {
-	if(argc<4)
+	if(argc!=3)
 	{
-		printf("Not enough params\nExiting\n");
+		printf("Wrong params\nExiting\n");
 		return 1;
 	}
 
-	printf("Connecting... ");
+	//-----------------------------------config read-----------------------------------
+	printf("Reading config file\n");
+	FILE* cfg_fp=fopen(argv[2], "r");
+	fgets((char*)cfg_uart, sizeof(cfg_uart), cfg_fp);
+	fgets((char*)cfg_call, sizeof(cfg_call), cfg_fp);
+	fgets((char*)cfg_module, sizeof(cfg_module), cfg_fp);
+	rtrim(cfg_uart);
+	rtrim(cfg_call);
+	fclose(cfg_fp);
+
+	//-----------------------------------device part-----------------------------------
+	fd=open((char*)cfg_uart, O_RDWR | O_NOCTTY | O_SYNC);
+	set_blocking(fd, 0);
+	set_interface_attribs(fd, B460800, 0);
+
+	uint8_t trash;
+	while(read(fd, &trash, 1)); //read all trash
+
+	//PING-PONG test
+	printf("Device's reply to PING...");
+	uint8_t ping_test[3];
+	write(fd, "\00\02", 2);
+	while(read(fd, &ping_test[0], 1)==0);
+	while(read(fd, &ping_test[1], 1)==0);
+	while(read(fd, &ping_test[2], 1)==0);
+	if(ping_test[0]==0 && ping_test[1]==3 && ping_test[2]==0)
+		printf(" OK\n");
+	else
+	{
+		printf(" no PONG reply\nExiting\n");
+		return 1;
+	}
+
+	//config the device
+	printf("Configuring device... ");
+	dev_set_rx_freq(433475000U);
+	dev_set_tx_freq(435000000U);
+	dev_set_freq_corr(-9);
+	dev_set_tx_power(37.0f);
+	printf("done\n");
+
+	//-----------------------------------internet part-----------------------------------
+	printf("Connecting to %s", argv[1]);
 
 	//server
 	serv_addr.sin_family = AF_INET;
@@ -257,34 +314,29 @@ int main(int argc, char* argv[])
 	sockt = socket(AF_INET, SOCK_DGRAM, 0);
 	if(sockt<0)
 	{
-		printf("Socket error\nExiting\n");
+		printf("\nSocket error\nExiting\n");
 		return 1;
 	}
 	memset((char*)&daddr, 0, sizeof(daddr));
 
 	//encode M17 callsign from argv
-	encode_callsign(&enc_callsign, (uint8_t*)argv[2]);
+	encode_callsign(&enc_callsign, cfg_call);
 
 	//send "CONN"
-	sprintf((char*)tx_buff, "CONN123456%s", argv[3]);
+	sprintf((char*)tx_buff, "CONN123456%c", cfg_module[0]);
 	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
 		tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
 	refl_send(tx_buff, 4+6+1);
 
-	printf("done\n");
-
-	fd=open((char*)"/dev/ttyS0", O_RDWR | O_NOCTTY | O_SYNC);
-	set_blocking(fd, 0);
-	set_interface_attribs(fd, B460800, 0);
-
-	//config the device
-	dev_set_rx_freq(433475000U);
-	dev_set_tx_freq(435000000U);
-	dev_set_freq_corr(-9);
-	dev_set_tx_power(37.0f);
+	printf(" OK\n");
 
 	while(1)
 	{
+		//UART comms
+		int8_t rx_bsb_sample=0;
+		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
+			;
+
 		//Receive a packet
 		saddr_size=sizeof(saddr);
 		rx_len = recvfrom(sockt, rx_buff, MAX_UDP_LEN, 0, (struct sockaddr*)&saddr, (socklen_t*)&saddr_size);
@@ -335,6 +387,10 @@ int main(int argc, char* argv[])
 				write(fd, cmd, cmd[1]);
 			}
 			
+			int8_t samples[960];
+			memset(samples, 0, 960);
+			write(fd, (uint8_t*)samples, 960);
+
 			printf("SID: %04X FN: %d DST: %s SRC: %s TYPE: %04X META: ",
 					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, m17stream.lsf.type);
 			for(uint8_t i=0; i<14; i++)

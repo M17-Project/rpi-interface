@@ -1,0 +1,3 @@
+/dev/ttyS0
+N0CALL H
+Z
