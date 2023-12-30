@@ -1,3 +1,10 @@
+/*
+ * rpi-interface.c
+ *
+ *  Created on: Dec 27, 2023
+ *      Author: SP5WWP
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +23,17 @@
 #include <unistd.h>
 
 #include "interface_cmds.h"
+
+//libm17
+//libm17
+#include <lib.h>
+#include <encode/convol.h>
+#include <math/golay.h>
+#include <payload/crc.h>
+#include <payload/lsf.h>
+#include <phy/interleave.h>
+#include <phy/randomize.h>
+#include <phy/sync.h>
 
 #define PORT 17000
 #define MAX_UDP_LEN 65535
@@ -117,7 +135,12 @@ void set_blocking(int fd, int should_block)
 		;//error_message ("error %d setting term attributes", errno);
 }
 
-//string
+/**
+ * @brief Replaces the first character with ASCII code under 0x20 with 0x00 (null termination).
+ * rtrim() scans the input string left to right.
+ * 
+ * @param inp Pointer to a string with text to trim.
+ */
 void rtrim(uint8_t* inp)
 {
 	for(uint8_t i=0; i<strlen((char*)inp); i++)
@@ -242,6 +265,7 @@ void dev_set_freq_corr(int16_t corr)
 	write(fd, cmd, cmd[1]);
 	usleep(10000);
 }
+
 
 void dev_set_tx_power(float power) //powr in dBm
 {
@@ -381,17 +405,15 @@ int main(int argc, char* argv[])
 				decode_callsign(dst_call, m17stream.lsf.dst);
 				decode_callsign(src_call, m17stream.lsf.src);
 
-				//test, short TX
-				cmd[0]=7;
-				cmd[1]=2;
-				write(fd, cmd, cmd[1]);
+				//initialize TX
+				write(fd, "\07\02", 2);
 			}
 			
 			int8_t samples[960];
 			memset(samples, 0, 960);
 			write(fd, (uint8_t*)samples, 960);
 
-			printf("SID: %04X FN: %d DST: %s SRC: %s TYPE: %04X META: ",
+			printf("SID: %04X FN: %04X DST: %s SRC: %s TYPE: %04X META: ",
 					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, m17stream.lsf.type);
 			for(uint8_t i=0; i<14; i++)
 				printf("%02X", m17stream.lsf.meta[i]);

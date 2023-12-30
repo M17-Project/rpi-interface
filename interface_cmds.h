@@ -4,9 +4,7 @@
  *  Created on: Dec 27, 2023
  *      Author: SP5WWP
  */
-
-#ifndef INC_INTERFACE_CMDS_H_
-#define INC_INTERFACE_CMDS_H_
+#pragma once
 
 enum cmd_t
 {
@@ -30,5 +28,3 @@ enum cmd_t
 	CMD_GET_TX_POWER,
 	CMD_GET_FREQ_CORR
 };
-
-#endif /* INC_INTERFACE_CMDS_H_ */
