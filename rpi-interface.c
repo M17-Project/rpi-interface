@@ -25,15 +25,7 @@
 #include "interface_cmds.h"
 
 //libm17
-//libm17
-#include <lib.h>
-#include <encode/convol.h>
-#include <math/golay.h>
-#include <payload/crc.h>
-#include <payload/lsf.h>
-#include <phy/interleave.h>
-#include <phy/randomize.h>
-#include <phy/sync.h>
+#include <m17/m17.h>
 
 #define PORT 17000
 #define MAX_UDP_LEN 65535
@@ -132,7 +124,9 @@ void set_blocking(int fd, int should_block)
 	tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
 
 	if (tcsetattr (fd, TCSANOW, &tty) != 0)
+	{
 		;//error_message ("error %d setting term attributes", errno);
+	}
 }
 
 /**
@@ -359,7 +353,9 @@ int main(int argc, char* argv[])
 		//UART comms
 		int8_t rx_bsb_sample=0;
 		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
-			;
+		{
+			; //do nothing for now
+		}
 
 		//Receive a packet
 		saddr_size=sizeof(saddr);
