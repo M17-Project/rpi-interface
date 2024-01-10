@@ -10,6 +10,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <math.h>
+#include <stdarg.h>
 
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
@@ -27,6 +28,7 @@
 
 //libm17
 #include <m17/m17.h>
+#include "term.h" //colored terminal font
 
 #define PORT		17000
 #define MAX_UDP_LEN	65535
@@ -63,6 +65,28 @@ uint64_t enc_callsign=0;
 //device stuff
 uint8_t cmd[8];
 
+//debug printf
+void dbg_print(const char* color_code, const char* fmt, ...)
+{
+	char str[100];
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsprintf(str, fmt, ap);
+	va_end(ap);
+
+	if(color_code!=NULL)
+	{
+		printf(color_code);
+		printf(str);
+		printf(TERM_DEFAULT);
+	}
+	else
+	{
+		printf(str);
+	}
+}
+
 //UART magic
 int fd; //UART handle
 
@@ -97,9 +121,9 @@ int set_interface_attribs(int fd, int speed, int parity)
 	tty.c_cflag &= ~CSTOPB;
 	tty.c_cflag &= ~CRTSCTS;
 
-	if (tcsetattr (fd, TCSANOW, &tty) != 0)
+	if(tcsetattr(fd, TCSANOW, &tty) != 0)
 	{
-		//error_message ("error %d from tcsetattr", errno);
+		dbg_print(TERM_RED, "Error from tcsetattr\n");
 		return -1;
 	}
 	
@@ -109,19 +133,19 @@ int set_interface_attribs(int fd, int speed, int parity)
 void set_blocking(int fd, int should_block)
 {
 	struct termios tty;
-	memset (&tty, 0, sizeof tty);
-	if (tcgetattr (fd, &tty) != 0)
+	memset(&tty, 0, sizeof tty);
+	if(tcgetattr(fd, &tty) != 0)
 	{
-		//error_message ("error %d from tggetattr", errno);
+		dbg_print(TERM_RED, "Error from tggetattr\n");
 		return;
 	}
 
 	tty.c_cc[VMIN]  = should_block ? 1 : 0;
 	tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
 
-	if (tcsetattr (fd, TCSANOW, &tty) != 0)
+	if(tcsetattr(fd, TCSANOW, &tty) != 0)
 	{
-		;//error_message ("error %d setting term attributes", errno);
+		dbg_print(TERM_YELLOW, "Error setting UART attributes\n");
 	}
 }
 
@@ -150,21 +174,53 @@ void gpio_init(void)
 	
 	//enable GPIO17 and GPIO18
 	fp=fopen("/sys/class/gpio/export", "wb");
-	fwrite("17", 2, 1, fp);
-	fclose(fp);
+	if(fp!=NULL)
+	{
+		fwrite("17", 2, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		exit(1);
+	}
 
 	fp=fopen("/sys/class/gpio/export", "wb");
-	fwrite("18", 2, 1, fp);
-	fclose(fp);
+	if(fp!=NULL)
+	{
+		fwrite("18", 2, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		exit(1);
+	}
 
 	//set as output, default value is logic low
 	fp=fopen("/sys/class/gpio/gpio17/direction", "wb");
-	fwrite("out", 3, 1, fp);
-	fclose(fp);
+	if(fp!=NULL)
+	{
+		fwrite("out", 3, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		exit(1);
+	}
 
 	fp=fopen("/sys/class/gpio/gpio18/direction", "wb");
-	fwrite("out", 3, 1, fp);
-	fclose(fp);
+	if(fp!=NULL)
+	{
+		fwrite("out", 3, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		exit(1);
+	}
 }
 
 void gpio_set(uint8_t gpio, uint8_t state)
@@ -199,6 +255,10 @@ void gpio_set(uint8_t gpio, uint8_t state)
 
 		fclose(fp);
 	}
+	else
+	{
+		dbg_print(TERM_YELLOW, "Error - can not set GPIO%d value\n", gpio);
+	}
 }
 
 //M17 stuff
@@ -206,7 +266,7 @@ uint8_t refl_send(const uint8_t* msg, uint16_t len)
 {
 	if(sendto(sockt, msg, len, 0, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))<0)
     {
-        //fprintf(stderr, "Error connecting with reflector.\nExiting.\n");
+        dbg_print(TERM_YELLOW, "Error connecting with reflector.\nExiting.\n");
         return 1;
     }
 
@@ -259,61 +319,82 @@ int main(int argc, char* argv[])
 {
 	if(argc!=3)
 	{
-		printf("Wrong params\nExiting\n");
+		dbg_print(TERM_RED, "Invalid params\nExiting\n");
 		return 1;
 	}
 
+	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
+
 	//-----------------------------------config read-----------------------------------
-	printf("Reading config file\n");
+	dbg_print(0, "Reading config file...");
 	FILE* cfg_fp=fopen(argv[2], "r");
-	fgets((char*)cfg_uart, sizeof(cfg_uart), cfg_fp);
-	fgets((char*)cfg_call, sizeof(cfg_call), cfg_fp);
-	fgets((char*)cfg_module, sizeof(cfg_module), cfg_fp);
-	rtrim(cfg_uart);
-	rtrim(cfg_call);
-	fclose(cfg_fp);
+	if(cfg_fp!=NULL)
+	{
+		fgets((char*)cfg_uart, sizeof(cfg_uart), cfg_fp);
+		fgets((char*)cfg_call, sizeof(cfg_call), cfg_fp);
+		fgets((char*)cfg_module, sizeof(cfg_module), cfg_fp);
+		rtrim(cfg_uart);
+		rtrim(cfg_call);
+		fclose(cfg_fp);
+		dbg_print(TERM_GREEN, " OK\n");
+	}
+	else
+	{
+		dbg_print(TERM_RED, " error reading %s\nExiting\n", argv[2]);
+		return 1;
+	}
 
 	//------------------------------------gpio init------------------------------------
+	dbg_print(0, "GPIO init...");
 	gpio_init();
 	gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
 	gpio_set(PA_EN, 0);
 	usleep(50000U); //50ms
 	gpio_set(nRST, 1);
 	usleep(1000000U); //1s for RRU boot-up
+	dbg_print(TERM_GREEN, " OK\n");
 
 	//-----------------------------------device part-----------------------------------
+	dbg_print(0, "UART init (%s)...", (char*)cfg_uart);
 	fd=open((char*)cfg_uart, O_RDWR | O_NOCTTY | O_SYNC);
+	if(fd==0)
+	{
+		dbg_print(TERM_RED, " error\nExiting\n");
+		exit(1);
+	}
+	
 	set_blocking(fd, 0);
 	set_interface_attribs(fd, B460800, 0);
+	dbg_print(TERM_GREEN, " OK\n");
 
+	//PING-PONG test
+	dbg_print(0, "Device's reply to PING...");
 	uint8_t trash;
 	while(read(fd, &trash, 1)); //read all trash
 
-	//PING-PONG test
-	printf("Device's reply to PING...");
 	uint8_t ping_test[3];
 	write(fd, "\00\02", 2);
 	while(read(fd, &ping_test[0], 1)==0);
 	while(read(fd, &ping_test[1], 1)==0);
 	while(read(fd, &ping_test[2], 1)==0);
 	if(ping_test[0]==0 && ping_test[1]==3 && ping_test[2]==0)
-		printf(" OK\n");
+		dbg_print(TERM_GREEN, " OK\n");
 	else
 	{
-		printf(" no PONG reply\nExiting\n");
+		dbg_print(TERM_RED, " invalid PONG reply\nExiting\n");
 		return 1;
 	}
 
 	//config the device
-	printf("Configuring device... ");
+	dbg_print(0, "Configuring device... ");
 	dev_set_rx_freq(433475000U);
 	dev_set_tx_freq(435000000U);
 	dev_set_freq_corr(-9);
 	dev_set_tx_power(37.0f);
-	printf("done\n");
+	dbg_print(TERM_GREEN, " done\n");
 
 	//-----------------------------------internet part-----------------------------------
-	printf("Connecting to %s", argv[1]);
+	dbg_print(0, "Connecting to %s", argv[1]);
 
 	//server
 	serv_addr.sin_family = AF_INET;
@@ -324,7 +405,7 @@ int main(int argc, char* argv[])
 	sockt = socket(AF_INET, SOCK_DGRAM, 0);
 	if(sockt<0)
 	{
-		printf("\nSocket error\nExiting\n");
+		dbg_print(TERM_RED, "\nSocket error\nExiting\n");
 		return 1;
 	}
 	memset((char*)&daddr, 0, sizeof(daddr));
@@ -338,7 +419,7 @@ int main(int argc, char* argv[])
 		tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
 	refl_send(tx_buff, 4+6+1);
 
-	printf(" OK\n");
+	dbg_print(TERM_GREEN, " OK\n");
 
 	while(1)
 	{
@@ -394,7 +475,7 @@ int main(int argc, char* argv[])
 				decode_callsign_bytes(src_call, m17stream.lsf.src);
 
 				//set PA_EN=1 and initialize TX
-				gpio_set(PA_EN, 1);
+				//gpio_set(PA_EN, 1);
 				write(fd, "\07\02", 2);
 			}
 			
