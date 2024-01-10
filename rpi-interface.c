@@ -22,13 +22,17 @@
 #include <termios.h>
 #include <unistd.h>
 
+//rpi-interface commands
 #include "interface_cmds.h"
 
 //libm17
 #include <m17/m17.h>
 
-#define PORT 17000
-#define MAX_UDP_LEN 65535
+#define PORT		17000
+#define MAX_UDP_LEN	65535
+
+#define nRST		17
+#define PA_EN		18
 
 //internet
 struct sockaddr_in source, dest; 
@@ -44,18 +48,10 @@ uint8_t rx_buff[65536]={0};
 int32_t tx_len=0, rx_len=0;
 
 //M17
-struct lsf_t
-{
-	uint64_t dst;
-	uint64_t src;
-	uint16_t type;
-	uint8_t meta[14]; //112-bit
-};
-
 struct m17stream_t
 {
 	uint16_t sid;
-	struct lsf_t lsf;
+	struct LSF lsf;
 	uint16_t fn;
 	uint8_t pld[16];
 } m17stream;
@@ -147,86 +143,74 @@ void rtrim(uint8_t* inp)
 	}
 }
 
+//GPIO - library-less, guerrilla style - we assume that only GPIO17 and 18 will be used
+void gpio_init(void)
+{
+	FILE* fp;
+	
+	//enable GPIO17 and GPIO18
+	fp=fopen("/sys/class/gpio/export", "wb");
+	fwrite("17", 2, 1, fp);
+	fclose(fp);
+
+	fp=fopen("/sys/class/gpio/export", "wb");
+	fwrite("18", 2, 1, fp);
+	fclose(fp);
+
+	//set as output, default value is logic low
+	fp=fopen("/sys/class/gpio/gpio17/direction", "wb");
+	fwrite("out", 3, 1, fp);
+	fclose(fp);
+
+	fp=fopen("/sys/class/gpio/gpio18/direction", "wb");
+	fwrite("out", 3, 1, fp);
+	fclose(fp);
+}
+
+void gpio_set(uint8_t gpio, uint8_t state)
+{
+	FILE* fp=NULL;
+
+	switch(gpio)
+	{
+		case 17:
+			fp=fopen("/sys/class/gpio/gpio17/value", "wb");
+		break;
+
+		case 18:
+			fp=fopen("/sys/class/gpio/gpio18/value", "wb");
+		break;
+
+		default:
+			;
+		break;
+	}
+
+	if(fp!=NULL)
+	{
+		if(state)
+		{
+			fwrite("1", 1, 1, fp);
+		}
+		else
+		{
+			fwrite("0", 1, 1, fp);
+		}
+
+		fclose(fp);
+	}
+}
+
 //M17 stuff
 uint8_t refl_send(const uint8_t* msg, uint16_t len)
 {
 	if(sendto(sockt, msg, len, 0, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))<0)
     {
-        //fprintf(stderr, "Error connecting with reflector\nExiting\n");
+        //fprintf(stderr, "Error connecting with reflector.\nExiting.\n");
         return 1;
     }
 
 	return 0;
-}
-
-//decodes a 48-bit value to a callsign
-void decode_callsign(uint8_t *outp, const uint64_t inp)
-{
-	uint64_t encoded=inp;
-
-	//repack the data to a uint64_t
-	/*for(uint8_t i=0; i<6; i++)
-		encoded|=(uint64_t)inp[5-i]<<(8*i);*/
-
-	//check if the value is reserved (not a callsign)
-	if(encoded>=262144000000000ULL)
-	{
-        if(encoded==0xFFFFFFFFFFFF) //broadcast
-        {
-            sprintf((char*)outp, "#BCAST");
-        }
-        else
-        {
-            outp[0]=0;
-        }
-
-        return;
-	}
-
-	//decode the callsign
-	uint8_t i=0;
-	while(encoded>0)
-	{
-		outp[i]=" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/."[encoded%40];
-		encoded/=40;
-		i++;
-	}
-	outp[i]=0;
-}
-
-//encode callsign
-uint8_t encode_callsign(uint64_t* out, const uint8_t* inp)
-{
-    //assert inp length
-    if(strlen((const char*)inp)>9)
-    {
-        return -1;
-    }
-
-    const uint8_t charMap[40]=" ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/.";
-
-    uint64_t tmp=0;
-
-    if(strcmp((const char*)inp, "ALL")==0)
-    {
-        *out=0xFFFFFFFFFFFF;
-        return 0;
-    }
-
-    for(int8_t i=strlen((const char*)inp)-1; i>=0; i--)
-    {
-        for(uint8_t j=0; j<40; j++)
-        {
-            if(inp[i]==charMap[j])
-            {
-                tmp=tmp*40+j;
-                break;
-            }
-        }
-    }
-
-    *out=tmp;
-    return 0;
 }
 
 //device config funcs
@@ -289,6 +273,14 @@ int main(int argc, char* argv[])
 	rtrim(cfg_call);
 	fclose(cfg_fp);
 
+	//------------------------------------gpio init------------------------------------
+	gpio_init();
+	gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
+	gpio_set(PA_EN, 0);
+	usleep(50000U); //50ms
+	gpio_set(nRST, 1);
+	usleep(1000000U); //1s for RRU boot-up
+
 	//-----------------------------------device part-----------------------------------
 	fd=open((char*)cfg_uart, O_RDWR | O_NOCTTY | O_SYNC);
 	set_blocking(fd, 0);
@@ -338,7 +330,7 @@ int main(int argc, char* argv[])
 	memset((char*)&daddr, 0, sizeof(daddr));
 
 	//encode M17 callsign from argv
-	encode_callsign(&enc_callsign, cfg_call);
+	encode_callsign_value(&enc_callsign, cfg_call);
 
 	//send "CONN"
 	sprintf((char*)tx_buff, "CONN123456%c", cfg_module[0]);
@@ -371,7 +363,7 @@ int main(int argc, char* argv[])
 
 		if(rx_buff[0]=='P' && rx_buff[1]=='I' && rx_buff[2]=='N' && rx_buff[3]=='G') //strstr() won't work here, as the PING string may occur in the payload
 		{
-			sprintf((char*)tx_buff, "PONG123456");
+			sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
 			for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
 				tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
 			refl_send(tx_buff, 4+6); //PONG
@@ -385,23 +377,24 @@ int main(int argc, char* argv[])
 
 			if(m17stream.fn==0) //update LSF at FN=0
 			{
-				m17stream.lsf.dst=0;
-				m17stream.lsf.src=0;
+				//exytract data with correct endianness
 				for(uint8_t i=0; i<6; i++)
-					m17stream.lsf.dst|=((uint64_t)rx_buff[6+i]<<((5-i)*8));
+					m17stream.lsf.dst[i]=rx_buff[6+5-i];
 				for(uint8_t i=0; i<6; i++)
-					m17stream.lsf.src|=((uint64_t)rx_buff[12+i]<<((5-i)*8));
-				
-				m17stream.lsf.type=((uint16_t)rx_buff[18]<<8)|rx_buff[19];
+					m17stream.lsf.src[i]=rx_buff[12+5-i];
+
+				m17stream.lsf.type[1]=rx_buff[18];
+				m17stream.lsf.type[0]=rx_buff[19];
 
 				memset((uint8_t*)m17stream.lsf.meta, 0, 14);
 				for(uint8_t i=0; i<14; i++)
 					m17stream.lsf.meta[i]=rx_buff[20+i];
 
-				decode_callsign(dst_call, m17stream.lsf.dst);
-				decode_callsign(src_call, m17stream.lsf.src);
+				decode_callsign_bytes(dst_call, m17stream.lsf.dst);
+				decode_callsign_bytes(src_call, m17stream.lsf.src);
 
-				//initialize TX
+				//set PA_EN=1 and initialize TX
+				gpio_set(PA_EN, 1);
 				write(fd, "\07\02", 2);
 			}
 			
@@ -410,13 +403,17 @@ int main(int argc, char* argv[])
 			write(fd, (uint8_t*)samples, 960);
 
 			printf("SID: %04X FN: %04X DST: %s SRC: %s TYPE: %04X META: ",
-					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, m17stream.lsf.type);
+					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, *((uint16_t*)m17stream.lsf.type));
 			for(uint8_t i=0; i<14; i++)
 				printf("%02X", m17stream.lsf.meta[i]);
 			printf("\n");
 
 			if(m17stream.fn&0x8000U)
+			{
 				printf("Stream end\n");
+				usleep(200000U); //wait 200ms (5 M17 frames)
+				gpio_set(PA_EN, 0);
+			}
 		}
 
 		memset((uint8_t*)rx_buff, 0, rx_len);

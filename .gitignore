@@ -1,2 +1,3 @@
+*.so
 rpi-interface
 .vscode
