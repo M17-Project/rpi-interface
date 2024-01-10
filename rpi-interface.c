@@ -381,7 +381,7 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_GREEN, " OK\n");
 	else
 	{
-		dbg_print(TERM_RED, " invalid PONG reply\nExiting\n");
+		dbg_print(TERM_RED, " invalid PONG reply, error code: %d\nExiting\n", ping_test[2]);
 		return 1;
 	}
 
