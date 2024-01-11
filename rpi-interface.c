@@ -51,6 +51,13 @@ uint8_t rx_buff[65536]={0};
 int tx_len=0, rx_len=0;
 int socket_byte_count=0; //data available for reading at the socket
 
+//config stuff
+uint8_t cfg_uart[64]={0}, cfg_call[15]={0}, cfg_module[5]={0};
+uint64_t enc_callsign=0;
+
+//device stuff
+uint8_t cmd[8];
+
 //M17
 struct m17stream_t
 {
@@ -60,12 +67,8 @@ struct m17stream_t
 	uint8_t pld[16];
 } m17stream;
 
-//config stuff
-uint8_t cfg_uart[64]={0}, cfg_call[15]={0}, cfg_module[5]={0};
-uint64_t enc_callsign=0;
-
-//device stuff
-uint8_t cmd[8];
+int8_t flt_buff[8*5+1];
+float f_flt_buff[(8-1)*5];
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -316,6 +319,15 @@ void dev_set_freq_corr(int16_t corr)
 	usleep(10000);
 }
 
+void dev_set_afc(uint8_t en)
+{
+	uint8_t cmd[3];
+	cmd[0]=CMD_SET_AFC;
+	cmd[1]=3;
+	cmd[2]=en?1:0;
+
+	write(fd, cmd, cmd[1]);
+}
 
 void dev_set_tx_power(float power) //powr in dBm
 {
@@ -431,6 +443,9 @@ int main(int argc, char* argv[])
 	dev_set_tx_power(37.0f);
 	dbg_print(TERM_GREEN, " done\n");
 
+	dev_set_afc(1);
+	dbg_print(TERM_GREEN, "AFC enabled\n");
+
 	//-----------------------------------internet part-----------------------------------
 	dbg_print(0, "Connecting to %s", argv[1]);
 
@@ -460,34 +475,40 @@ int main(int argc, char* argv[])
 	dbg_print(TERM_GREEN, " OK\n");
 
 	//start RX
-	FILE *dbg_bsb_dump=fopen("bsb.out", "wb");
 	dev_start_rx();
 	dbg_print(0, "RX start\n");
 
-	uint32_t bsb_cnt=0;
-	uint8_t bsb_write=1;
-
 	//UART comms
 	int8_t rx_bsb_sample=0;
+
+	float f_sample;
 
 	while(1)
 	{
 		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
 		{
-			if(bsb_write)
-			{
-				fwrite((uint8_t*)&rx_bsb_sample, 1, 1, dbg_bsb_dump);
-				bsb_cnt++;
-			}
-		}
+			//push buffer
+			for(uint8_t i=0; i<sizeof(flt_buff)-1; i++)
+				flt_buff[i]=flt_buff[i+1];
+			flt_buff[sizeof(flt_buff)-1]=rx_bsb_sample;
 
-		if(bsb_cnt==24000U*5) //do once, stop at 5s
-		{
-			dev_stop_rx();
-			bsb_cnt++;
-			fclose(dbg_bsb_dump);
-			bsb_write=0;
-			dbg_print(0, "RX end\n");
+			f_sample=0.0f;
+			for(uint8_t i=0; i<sizeof(flt_buff); i++)
+				f_sample+=rrc_taps_5[i]*(float)flt_buff[i];
+			f_sample*=0.028846153846154f; //map +104 to +3 (works for CC1200 only)
+
+			for(uint8_t i=0; i<sizeof(f_flt_buff)/sizeof(float)-1; i++)
+				f_flt_buff[i]=f_flt_buff[i+1];
+			f_flt_buff[sizeof(f_flt_buff)/sizeof(float)-1]=f_sample;
+
+			//L2 norm check against syncword
+			float symbols[8];
+			for(uint8_t i=0; i<7; i++)
+				symbols[i]=f_flt_buff[i*5];
+			symbols[7]=f_flt_buff[34];
+
+			if(eucl_norm(symbols, str_sync_symbols, 8)<2.0f)
+				dbg_print(TERM_YELLOW, "Frame syncword detected\n");
 		}
 
 		//receive a packet - non-blocking
