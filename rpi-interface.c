@@ -22,6 +22,7 @@
 #include <fcntl.h> 
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
 //rpi-interface commands
 #include "interface_cmds.h"
@@ -38,16 +39,17 @@
 
 //internet
 struct sockaddr_in source, dest; 
-int32_t sockt;
-uint32_t saddr_size, data_size;
+int sockt;
 struct iphdr *iph;
 struct sockaddr_in saddr;
 struct sockaddr_in daddr;
 struct sockaddr_in serv_addr;
+uint32_t saddr_size=sizeof(saddr);
 
 uint8_t tx_buff[512]={0};
 uint8_t rx_buff[65536]={0};
-int32_t tx_len=0, rx_len=0;
+int tx_len=0, rx_len=0;
+int socket_byte_count=0; //data available for reading at the socket
 
 //M17
 struct m17stream_t
@@ -197,6 +199,8 @@ void gpio_init(void)
 		exit(1);
 	}
 
+	usleep(250000U); //give it 250ms
+
 	//set as output, default value is logic low
 	fp=fopen("/sys/class/gpio/gpio17/direction", "wb");
 	if(fp!=NULL)
@@ -266,7 +270,7 @@ uint8_t refl_send(const uint8_t* msg, uint16_t len)
 {
 	if(sendto(sockt, msg, len, 0, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))<0)
     {
-        dbg_print(TERM_YELLOW, "Error connecting with reflector.\nExiting.\n");
+        dbg_print(TERM_RED, "Error connecting with reflector.\nExiting.\n");
         return 1;
     }
 
@@ -274,6 +278,14 @@ uint8_t refl_send(const uint8_t* msg, uint16_t len)
 }
 
 //device config funcs
+void dev_ping(void)
+{
+	uint8_t cmd[2];
+	cmd[0]=CMD_PING;			//PING
+	cmd[1]=2;
+	write(fd, cmd, cmd[1]);
+}
+
 void dev_set_rx_freq(uint32_t freq)
 {
 	uint8_t cmd[6];
@@ -313,6 +325,32 @@ void dev_set_tx_power(float power) //powr in dBm
 	cmd[2]=roundf(power*4.0f);
 	write(fd, cmd, cmd[1]);
 	usleep(10000);
+}
+
+void dev_start_tx(void)
+{
+	uint8_t cmd[3];
+	cmd[0]=CMD_SET_TX_START;	//start tranmission
+	cmd[1]=2;
+	write(fd, cmd, cmd[1]);
+}
+
+void dev_start_rx(void)
+{
+	uint8_t cmd[3];
+	cmd[0]=CMD_SET_RX;			//start reception
+	cmd[1]=3;
+	cmd[2]=1;
+	write(fd, cmd, cmd[1]);
+}
+
+void dev_stop_rx(void)
+{
+	uint8_t cmd[3];
+	cmd[0]=CMD_SET_RX;			//stop reception
+	cmd[1]=3;
+	cmd[2]=0;
+	write(fd, cmd, cmd[1]);
 }
 
 int main(int argc, char* argv[])
@@ -373,7 +411,7 @@ int main(int argc, char* argv[])
 	while(read(fd, &trash, 1)); //read all trash
 
 	uint8_t ping_test[3];
-	write(fd, "\00\02", 2);
+	dev_ping();
 	while(read(fd, &ping_test[0], 1)==0);
 	while(read(fd, &ping_test[1], 1)==0);
 	while(read(fd, &ping_test[2], 1)==0);
@@ -381,8 +419,8 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_GREEN, " OK\n");
 	else
 	{
-		dbg_print(TERM_RED, " invalid PONG reply, error code: %d\nExiting\n", ping_test[2]);
-		return 1;
+		dbg_print(TERM_YELLOW, " PONG error code: %d\n", ping_test[2]);
+		//return 1;
 	}
 
 	//config the device
@@ -421,83 +459,104 @@ int main(int argc, char* argv[])
 
 	dbg_print(TERM_GREEN, " OK\n");
 
+	//start RX
+	FILE *dbg_bsb_dump=fopen("bsb.out", "wb");
+	dev_start_rx();
+	dbg_print(0, "RX start\n");
+
+	uint32_t bsb_cnt=0;
+	uint8_t bsb_write=1;
+
+	//UART comms
+	int8_t rx_bsb_sample=0;
+
 	while(1)
 	{
-		//UART comms
-		int8_t rx_bsb_sample=0;
 		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
 		{
-			; //do nothing for now
-		}
-
-		//Receive a packet
-		saddr_size=sizeof(saddr);
-		rx_len = recvfrom(sockt, rx_buff, MAX_UDP_LEN, 0, (struct sockaddr*)&saddr, (socklen_t*)&saddr_size);
-		if(rx_len<0)
-		{
-			printf("Packets not recieved\n");
-			return 1;
-		}
-
-		//debug
-		//printf("Size:%d\nPayload:%s\n", rx_len, rx_buff);
-
-		if(rx_buff[0]=='P' && rx_buff[1]=='I' && rx_buff[2]=='N' && rx_buff[3]=='G') //strstr() won't work here, as the PING string may occur in the payload
-		{
-			sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
-			for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-				tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
-			refl_send(tx_buff, 4+6); //PONG
-		}
-		else if(rx_buff[0]=='M' && rx_buff[1]=='1' && rx_buff[2]=='7' && rx_buff[3]==' ')
-		{
-			m17stream.sid=((uint16_t)rx_buff[4]<<8)|rx_buff[5];
-			m17stream.fn=((uint16_t)rx_buff[34]<<8)|rx_buff[35];
-			static uint8_t dst_call[10]={0};
-			static uint8_t src_call[10]={0};
-
-			if(m17stream.fn==0) //update LSF at FN=0
+			if(bsb_write)
 			{
-				//exytract data with correct endianness
-				for(uint8_t i=0; i<6; i++)
-					m17stream.lsf.dst[i]=rx_buff[6+5-i];
-				for(uint8_t i=0; i<6; i++)
-					m17stream.lsf.src[i]=rx_buff[12+5-i];
+				fwrite((uint8_t*)&rx_bsb_sample, 1, 1, dbg_bsb_dump);
+				bsb_cnt++;
+			}
+		}
 
-				m17stream.lsf.type[1]=rx_buff[18];
-				m17stream.lsf.type[0]=rx_buff[19];
+		if(bsb_cnt==24000U*5) //do once, stop at 5s
+		{
+			dev_stop_rx();
+			bsb_cnt++;
+			fclose(dbg_bsb_dump);
+			bsb_write=0;
+			dbg_print(0, "RX end\n");
+		}
 
-				memset((uint8_t*)m17stream.lsf.meta, 0, 14);
+		//receive a packet - non-blocking
+		ioctl(sockt, FIONREAD, &socket_byte_count);
+		if(socket_byte_count>0)
+		{
+			rx_len = recvfrom(sockt, rx_buff, MAX_UDP_LEN, 0, (struct sockaddr*)&saddr, (socklen_t*)&saddr_size);
+
+			//debug
+			//dbg_print(0, "Size:%d\nPayload:%s\n", rx_len, rx_buff);
+
+			if(rx_buff[0]=='P' && rx_buff[1]=='I' && rx_buff[2]=='N' && rx_buff[3]=='G') //strstr() won't work here, as the PING string may occur in the payload
+			{
+				sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
+				for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
+					tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
+				refl_send(tx_buff, 4+6); //PONG
+				memset((uint8_t*)rx_buff, 0, rx_len);
+			}
+			else if(rx_buff[0]=='M' && rx_buff[1]=='1' && rx_buff[2]=='7' && rx_buff[3]==' ')
+			{
+				m17stream.sid=((uint16_t)rx_buff[4]<<8)|rx_buff[5];
+				m17stream.fn=((uint16_t)rx_buff[34]<<8)|rx_buff[35];
+				static uint8_t dst_call[10]={0};
+				static uint8_t src_call[10]={0};
+
+				if(m17stream.fn==0) //update LSF at FN=0
+				{
+					//exytract data with correct endianness
+					for(uint8_t i=0; i<6; i++)
+						m17stream.lsf.dst[i]=rx_buff[6+5-i];
+					for(uint8_t i=0; i<6; i++)
+						m17stream.lsf.src[i]=rx_buff[12+5-i];
+
+					m17stream.lsf.type[1]=rx_buff[18];
+					m17stream.lsf.type[0]=rx_buff[19];
+
+					memset((uint8_t*)m17stream.lsf.meta, 0, 14);
+					for(uint8_t i=0; i<14; i++)
+						m17stream.lsf.meta[i]=rx_buff[20+i];
+
+					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
+					decode_callsign_bytes(src_call, m17stream.lsf.src);
+
+					//set PA_EN=1 and initialize TX
+					//gpio_set(PA_EN, 1);
+					dev_start_tx();
+				}
+				
+				int8_t samples[960];
+				memset(samples, 0, 960);
+				write(fd, (uint8_t*)samples, 960);
+
+				printf("SID: %04X FN: %04X DST: %s SRC: %s TYPE: %04X META: ",
+						m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, *((uint16_t*)m17stream.lsf.type));
 				for(uint8_t i=0; i<14; i++)
-					m17stream.lsf.meta[i]=rx_buff[20+i];
+					printf("%02X", m17stream.lsf.meta[i]);
+				printf("\n");
 
-				decode_callsign_bytes(dst_call, m17stream.lsf.dst);
-				decode_callsign_bytes(src_call, m17stream.lsf.src);
+				if(m17stream.fn&0x8000U)
+				{
+					printf("Stream end\n");
+					usleep(200000U); //wait 200ms (5 M17 frames)
+					gpio_set(PA_EN, 0);
+				}
 
-				//set PA_EN=1 and initialize TX
-				//gpio_set(PA_EN, 1);
-				write(fd, "\07\02", 2);
-			}
-			
-			int8_t samples[960];
-			memset(samples, 0, 960);
-			write(fd, (uint8_t*)samples, 960);
-
-			printf("SID: %04X FN: %04X DST: %s SRC: %s TYPE: %04X META: ",
-					m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, *((uint16_t*)m17stream.lsf.type));
-			for(uint8_t i=0; i<14; i++)
-				printf("%02X", m17stream.lsf.meta[i]);
-			printf("\n");
-
-			if(m17stream.fn&0x8000U)
-			{
-				printf("Stream end\n");
-				usleep(200000U); //wait 200ms (5 M17 frames)
-				gpio_set(PA_EN, 0);
+				memset((uint8_t*)rx_buff, 0, rx_len);
 			}
 		}
-
-		memset((uint8_t*)rx_buff, 0, rx_len);
 	}
 	
 	//should never get here	
