@@ -67,8 +67,15 @@ struct m17stream_t
 	uint8_t pld[16];
 } m17stream;
 
-int8_t flt_buff[8*5+1];
-float f_flt_buff[(8-1)*5];
+enum rx_state_t
+{
+	RX_IDLE,
+	RX_SYNCD
+};
+
+int8_t flt_buff[8*5+1];				//length of this has to match RRC filter's length
+float f_flt_buff[1000];				//this can be longer
+enum rx_state_t rx_state=RX_IDLE;
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -482,6 +489,7 @@ int main(int argc, char* argv[])
 	int8_t rx_bsb_sample=0;
 
 	float f_sample;
+	FILE *fp=fopen("test.out", "wb");
 
 	while(1)
 	{
@@ -497,18 +505,35 @@ int main(int argc, char* argv[])
 				f_sample+=rrc_taps_5[i]*(float)flt_buff[i];
 			f_sample*=0.028846153846154f; //map +104 to +3 (works for CC1200 only)
 
-			for(uint8_t i=0; i<sizeof(f_flt_buff)/sizeof(float)-1; i++)
+			for(uint16_t i=0; i<sizeof(f_flt_buff)/sizeof(float)-1; i++)
 				f_flt_buff[i]=f_flt_buff[i+1];
 			f_flt_buff[sizeof(f_flt_buff)/sizeof(float)-1]=f_sample;
 
 			//L2 norm check against syncword
-			float symbols[8];
-			for(uint8_t i=0; i<7; i++)
+			float symbols[16];
+			for(uint8_t i=0; i<15; i++)
 				symbols[i]=f_flt_buff[i*5];
-			symbols[7]=f_flt_buff[34];
+			symbols[15]=f_flt_buff[15*5];
 
-			if(eucl_norm(symbols, str_sync_symbols, 8)<2.0f)
-				dbg_print(TERM_YELLOW, "Frame syncword detected\n");
+			int8_t stream[16];
+			stream[0]=3; stream[1]=-3; stream[2]=3; stream[3]=-3;
+			stream[4]=3; stream[5]=-3; stream[6]=3; stream[7]=-3;
+			memcpy(&stream[8], lsf_sync_symbols, 8);
+			float dist_lsf=eucl_norm(symbols, stream, 16);
+			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8);
+
+			fwrite(&dist_str, 4, 1, fp);
+			if(dist_lsf<=4.5f)
+			{
+				dbg_print(TERM_YELLOW, "LSF syncword detected, %1.2f\n", dist_lsf);
+				;
+			}
+			else if(dist_str<=2.0f)
+			{
+				dbg_print(TERM_YELLOW, "Stream syncword detected\n");
+				;
+			}
+				
 		}
 
 		//receive a packet - non-blocking
@@ -520,15 +545,16 @@ int main(int argc, char* argv[])
 			//debug
 			//dbg_print(0, "Size:%d\nPayload:%s\n", rx_len, rx_buff);
 
-			if(rx_buff[0]=='P' && rx_buff[1]=='I' && rx_buff[2]=='N' && rx_buff[3]=='G') //strstr() won't work here, as the PING string may occur in the payload
+			if(strstr((char*)rx_buff, "PING")==(char*)rx_buff)
 			{
 				sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
 				for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
 					tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
 				refl_send(tx_buff, 4+6); //PONG
 				memset((uint8_t*)rx_buff, 0, rx_len);
+				//dbg_print(TERM_YELLOW, "PING\n");
 			}
-			else if(rx_buff[0]=='M' && rx_buff[1]=='1' && rx_buff[2]=='7' && rx_buff[3]==' ')
+			else if(strstr((char*)rx_buff, "M17 ")==(char*)rx_buff)
 			{
 				m17stream.sid=((uint16_t)rx_buff[4]<<8)|rx_buff[5];
 				m17stream.fn=((uint16_t)rx_buff[34]<<8)|rx_buff[35];
