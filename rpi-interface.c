@@ -23,6 +23,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <time.h>
 
 //rpi-interface commands
 #include "interface_cmds.h"
@@ -386,6 +387,7 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
+	srand(time(NULL));
 	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
 
 	//-----------------------------------config read-----------------------------------
@@ -572,11 +574,39 @@ int main(int argc, char* argv[])
 				uint8_t call_dst[10], call_src[10], can;
 				decode_callsign_bytes(call_dst, lsf.dst);
                 decode_callsign_bytes(call_src, lsf.src);
-				can=(*((uint16_t*)lsf.type)>>7)&0xF;
-				if(*((uint16_t*)lsf.type)&1) //if stream
+				can=(*((uint16_t*)lsf.type)>>7)&0xFU;
+
+				time_t rawtime;
+    			struct tm * timeinfo;
+
+				time(&rawtime);
+    			timeinfo=localtime(&rawtime);
+
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR LSF ",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+				if(!CRC_M17(lsf_b, 30))											//if CRC valid
 				{
-					dbg_print(TERM_YELLOW, "[Stream LSF] DST: %-9s\tSRC: %-9s\tCAN: %02d\tMER: %2.1f%\n",
-						call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
+					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
+					*((uint16_t*)&refl_pld[4])=rand()%0xFFFFU;					//SID
+					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
+					*((uint16_t*)&refl_pld[34])=0;								//FN
+					memset(&refl_pld[36], 0, 128/8);							//payload (zeros)
+					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
+					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
+					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
+
+					if(*((uint16_t*)lsf.type)&1) //if stream
+					{
+						dbg_print(TERM_GREEN, "CRC OK\t");
+						dbg_print(TERM_YELLOW, "DST: %-9s\tSRC: %-9s\tCAN: %02d\tMER: %2.1f%%\n",
+							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+					}
+				}
+				else
+				{
+					dbg_print(TERM_RED, "CRC ERR\n");
 				}
 			}
 			else if(dist_str<=2.0f)
