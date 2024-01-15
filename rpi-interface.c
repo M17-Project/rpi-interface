@@ -79,10 +79,9 @@ int8_t flt_buff[8*5+1];						//length of this has to match RRC filter's length
 float f_flt_buff[(8+8)*5+4800/25*5+2];		//8 preamble symbols, 8 for the syncword, and 960 for the payload.
 											//floor(sps/2)=2 extra samples for timing error correction
 enum rx_state_t rx_state=RX_IDLE;
-
-int8_t lsf_sync_ext[16];
-
-struct LSF lsf; //recovered LSF
+int8_t lsf_sync_ext[16];					//extended LSF syncword
+struct LSF lsf; 							//recovered LSF
+uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -530,15 +529,29 @@ int main(int argc, char* argv[])
 			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8);
 
 			//fwrite(&dist_str, 4, 1, fp);
-			if(dist_lsf<=4.5f)
+			if(dist_lsf<=4.5f && rx_state==RX_IDLE)
 			{
+				rx_state=RX_SYNCD;
+
+				//find L2's minimum
+				uint8_t sample_offset=0;
+				for(uint8_t i=1; i<=2; i++)
+				{
+					for(uint8_t j=0; j<15; j++)
+						symbols[j]=f_flt_buff[j*5+i];
+					symbols[15]=f_flt_buff[15*5+i];
+					float tmp=eucl_norm(symbols, lsf_sync_ext, 16);
+					if(tmp<dist_lsf)
+						sample_offset=i;
+				}
+
 				float pld[SYM_PER_PLD];
 				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
 				uint8_t lsf_b[30+1];
 
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
-					pld[i]=f_flt_buff[16*5+i*5];
+					pld[i]=f_flt_buff[16*5+i*5+sample_offset]; //add symbol timing correction
 				}
 
 				slice_symbols(soft_bit, pld);
@@ -561,14 +574,24 @@ int main(int argc, char* argv[])
                 decode_callsign_bytes(call_src, lsf.src);
 				can=(*((uint16_t*)lsf.type)>>7)&0xF;
 				if(*((uint16_t*)lsf.type)&1) //if stream
-					dbg_print(TERM_YELLOW, "[Stream LSF] DST: %-9s\tSRC: %-9s\tCAN: %02d\tERR: %2.1f\n", call_dst, call_src, can, (float)e/0xFFFFU);
+				{
+					dbg_print(TERM_YELLOW, "[Stream LSF] DST: %-9s\tSRC: %-9s\tCAN: %02d\tMER: %2.1f%\n",
+						call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+				}
 			}
 			else if(dist_str<=2.0f)
 			{
 				;
-				//dbg_print(TERM_YELLOW, "Stream\n");
+				//dbg_print(TERM_YELLOW, "[Stream frame]\n");
 			}
-				
+			
+			//RX sync timeout
+			sample_cnt++;
+			if(sample_cnt==480) //half frame worth of samples
+			{
+				rx_state=RX_IDLE;
+				sample_cnt=0;
+			}
 		}
 
 		//receive a packet - non-blocking
