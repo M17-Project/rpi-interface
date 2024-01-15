@@ -31,11 +31,13 @@
 #include <m17/m17.h>
 #include "term.h" //colored terminal font
 
-#define PORT		17000
-#define MAX_UDP_LEN	65535
+#define PORT					17000
+#define MAX_UDP_LEN				65535
 
-#define nRST		17
-#define PA_EN		18
+#define nRST					17
+#define PA_EN					18
+
+#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/pow(2, 21)*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`
 
 //internet
 struct sockaddr_in source, dest; 
@@ -73,14 +75,19 @@ enum rx_state_t
 	RX_SYNCD
 };
 
-int8_t flt_buff[8*5+1];				//length of this has to match RRC filter's length
-float f_flt_buff[1000];				//this can be longer
+int8_t flt_buff[8*5+1];						//length of this has to match RRC filter's length
+float f_flt_buff[(8+8)*5+4800/25*5+2];		//8 preamble symbols, 8 for the syncword, and 960 for the payload.
+											//floor(sps/2)=2 extra samples for timing error correction
 enum rx_state_t rx_state=RX_IDLE;
+
+int8_t lsf_sync_ext[16];
+
+struct LSF lsf; //recovered LSF
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
 {
-	char str[100];
+	char str[200];
 	va_list ap;
 
 	va_start(ap, fmt);
@@ -478,8 +485,12 @@ int main(int argc, char* argv[])
 	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
 		tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
 	refl_send(tx_buff, 4+6+1);
-
 	dbg_print(TERM_GREEN, " OK\n");
+
+	//extend the LSF syncword pattern with 8 symbols from the preamble
+	lsf_sync_ext[0]=3; lsf_sync_ext[1]=-3; lsf_sync_ext[2]=3; lsf_sync_ext[3]=-3;
+	lsf_sync_ext[4]=3; lsf_sync_ext[5]=-3; lsf_sync_ext[6]=3; lsf_sync_ext[7]=-3;
+	memcpy(&lsf_sync_ext[8], lsf_sync_symbols, 8);
 
 	//start RX
 	dev_start_rx();
@@ -489,7 +500,7 @@ int main(int argc, char* argv[])
 	int8_t rx_bsb_sample=0;
 
 	float f_sample;
-	FILE *fp=fopen("test.out", "wb");
+	//FILE *fp=fopen("test.out", "wb");
 
 	while(1)
 	{
@@ -503,7 +514,7 @@ int main(int argc, char* argv[])
 			f_sample=0.0f;
 			for(uint8_t i=0; i<sizeof(flt_buff); i++)
 				f_sample+=rrc_taps_5[i]*(float)flt_buff[i];
-			f_sample*=0.028846153846154f; //map +104 to +3 (works for CC1200 only)
+			f_sample*=SYMBOL_SCALING_COEFF; //map +104 to +3 (works for CC1200 only)
 
 			for(uint16_t i=0; i<sizeof(f_flt_buff)/sizeof(float)-1; i++)
 				f_flt_buff[i]=f_flt_buff[i+1];
@@ -515,23 +526,47 @@ int main(int argc, char* argv[])
 				symbols[i]=f_flt_buff[i*5];
 			symbols[15]=f_flt_buff[15*5];
 
-			int8_t stream[16];
-			stream[0]=3; stream[1]=-3; stream[2]=3; stream[3]=-3;
-			stream[4]=3; stream[5]=-3; stream[6]=3; stream[7]=-3;
-			memcpy(&stream[8], lsf_sync_symbols, 8);
-			float dist_lsf=eucl_norm(symbols, stream, 16);
+			float dist_lsf=eucl_norm(&symbols[0], lsf_sync_ext, 16); //check against extended LSF syncword (8 symbols, alternating -3/+3)
 			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8);
 
-			fwrite(&dist_str, 4, 1, fp);
+			//fwrite(&dist_str, 4, 1, fp);
 			if(dist_lsf<=4.5f)
 			{
-				dbg_print(TERM_YELLOW, "LSF syncword detected, %1.2f\n", dist_lsf);
-				;
+				float pld[SYM_PER_PLD];
+				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
+				uint8_t lsf_b[30+1];
+
+				for(uint16_t i=0; i<SYM_PER_PLD; i++)
+				{
+					pld[i]=f_flt_buff[16*5+i*5];
+				}
+
+				slice_symbols(soft_bit, pld);
+				randomize_soft_bits(soft_bit);
+				reorder_soft_bits(d_soft_bit, soft_bit);
+				uint32_t e=viterbi_decode_punctured(lsf_b, d_soft_bit, puncture_pattern_1, 2*SYM_PER_PLD, sizeof(puncture_pattern_1));
+				//shift the buffer 1 position left - get rid of the encoded flushing bits
+                for(uint8_t i=0; i<30; i++)
+                    lsf_b[i]=lsf_b[i+1];
+				for(uint8_t i=0; i<6; i++)
+				{
+					lsf.dst[i]=lsf_b[5-i];
+					lsf.src[i]=lsf_b[11-i];
+				}
+				lsf.type[0]=lsf_b[13];
+				lsf.type[1]=lsf_b[12];
+
+				uint8_t call_dst[10], call_src[10], can;
+				decode_callsign_bytes(call_dst, lsf.dst);
+                decode_callsign_bytes(call_src, lsf.src);
+				can=(*((uint16_t*)lsf.type)>>7)&0xF;
+				if(*((uint16_t*)lsf.type)&1) //if stream
+					dbg_print(TERM_YELLOW, "[Stream LSF] DST: %-9s\tSRC: %-9s\tCAN: %02d\tERR: %2.1f\n", call_dst, call_src, can, (float)e/0xFFFFU);
 			}
 			else if(dist_str<=2.0f)
 			{
-				dbg_print(TERM_YELLOW, "Stream syncword detected\n");
 				;
+				//dbg_print(TERM_YELLOW, "Stream\n");
 			}
 				
 		}
