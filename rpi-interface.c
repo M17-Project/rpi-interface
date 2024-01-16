@@ -77,7 +77,7 @@ enum rx_state_t
 };
 
 int8_t flt_buff[8*5+1];						//length of this has to match RRC filter's length
-float f_flt_buff[(8+8)*5+4800/25*5+2];		//8 preamble symbols, 8 for the syncword, and 960 for the payload.
+float f_flt_buff[8*5+2*(8*5+4800/25*5)+2];	//8 preamble symbols, 8 for the syncword, and 960 for the payload.
 											//floor(sps/2)=2 extra samples for timing error correction
 enum rx_state_t rx_state=RX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
@@ -503,6 +503,10 @@ int main(int argc, char* argv[])
 	float f_sample;
 	//FILE *fp=fopen("test.out", "wb");
 
+	//time
+	time_t rawtime;
+    struct tm * timeinfo;
+
 	while(1)
 	{
 		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
@@ -528,13 +532,11 @@ int main(int argc, char* argv[])
 			symbols[15]=f_flt_buff[15*5];
 
 			float dist_lsf=eucl_norm(&symbols[0], lsf_sync_ext, 16); //check against extended LSF syncword (8 symbols, alternating -3/+3)
-			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8);
+			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8); //TODO: instead of checking 1 SW, try looking for 2
 
 			//fwrite(&dist_str, 4, 1, fp);
 			if(dist_lsf<=4.5f && rx_state==RX_IDLE)
 			{
-				rx_state=RX_SYNCD;
-
 				//find L2's minimum
 				uint8_t sample_offset=0;
 				for(uint8_t i=1; i<=2; i++)
@@ -542,7 +544,7 @@ int main(int argc, char* argv[])
 					for(uint8_t j=0; j<15; j++)
 						symbols[j]=f_flt_buff[j*5+i];
 					symbols[15]=f_flt_buff[15*5+i];
-					float tmp=eucl_norm(symbols, lsf_sync_ext, 16);
+					float tmp=eucl_norm(&symbols[0], lsf_sync_ext, 16);
 					if(tmp<dist_lsf)
 						sample_offset=i;
 				}
@@ -576,20 +578,19 @@ int main(int argc, char* argv[])
                 decode_callsign_bytes(call_src, lsf.src);
 				can=(*((uint16_t*)lsf.type)>>7)&0xFU;
 
-				time_t rawtime;
-    			struct tm * timeinfo;
-
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR LSF ",
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR LSF:",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 
-				if(!CRC_M17(lsf_b, 30))											//if CRC valid
+				if(!CRC_M17(lsf_b, 30)) //if CRC valid
 				{
+					rx_state=RX_SYNCD; //change RX state
+
 					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
 					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
-					*((uint16_t*)&refl_pld[4])=rand()%0xFFFFU;					//SID
+					*((uint16_t*)&refl_pld[4])=rand()%0x10000U;					//SID
 					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
 					*((uint16_t*)&refl_pld[34])=0;								//FN
 					memset(&refl_pld[36], 0, 128/8);							//payload (zeros)
@@ -599,28 +600,70 @@ int main(int argc, char* argv[])
 
 					if(*((uint16_t*)lsf.type)&1) //if stream
 					{
-						dbg_print(TERM_GREEN, "CRC OK\t");
-						dbg_print(TERM_YELLOW, "DST: %-9s\tSRC: %-9s\tCAN: %02d\tMER: %2.1f%%\n",
+						dbg_print(TERM_GREEN, " CRC OK ");
+						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
 							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 					}
 				}
 				else
 				{
-					dbg_print(TERM_RED, "CRC ERR\n");
+					dbg_print(TERM_RED, " CRC ERR\n");
 				}
 			}
-			else if(dist_str<=2.0f)
+			else if(dist_str<=3.5f)// && rx_state==RX_SYNCD)
 			{
-				;
-				//dbg_print(TERM_YELLOW, "[Stream frame]\n");
+				//find L2's minimum
+				uint8_t sample_offset=0;
+				for(uint8_t i=1; i<=2; i++)
+				{
+					for(uint8_t j=0; j<15; j++)
+						symbols[j]=f_flt_buff[j*5+i];
+					symbols[8]=f_flt_buff[15*5+i];
+					float tmp=eucl_norm(&symbols[8], str_sync_symbols, 8);
+					if(tmp<dist_lsf)
+						sample_offset=i;
+				}
+
+				float pld[SYM_PER_PLD];
+				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
+				uint8_t frame_data[(16+128)/8+1]; //1 byte extra for flushing
+
+				for(uint16_t i=0; i<SYM_PER_PLD; i++)
+				{
+					pld[i]=f_flt_buff[16*5+i*5+sample_offset];
+				}
+
+				slice_symbols(soft_bit, pld);
+				randomize_soft_bits(soft_bit);
+				reorder_soft_bits(d_soft_bit, soft_bit);
+
+				uint16_t enc_data[272];
+				for(uint16_t i=0; i<272; i++)
+                {
+                    enc_data[i]=d_soft_bit[96+i];
+                }
+
+				uint32_t e=viterbi_decode_punctured(frame_data, enc_data, puncture_pattern_2, 2*SYM_PER_PLD-96, sizeof(puncture_pattern_2));
+				uint16_t fn=(frame_data[1]<<8)|frame_data[2];
+				
+				time(&rawtime);
+    			timeinfo=localtime(&rawtime);
+
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR FRM: ",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_YELLOW, " FN:%04X", fn);
+				dbg_print(TERM_YELLOW, "\n");
 			}
 			
 			//RX sync timeout
-			sample_cnt++;
-			if(sample_cnt==480) //half frame worth of samples
+			if(rx_state==RX_SYNCD)
 			{
-				rx_state=RX_IDLE;
-				sample_cnt=0;
+				sample_cnt++;
+				if(sample_cnt==1440)
+				{
+					rx_state=RX_IDLE;
+					sample_cnt=0;
+				}
 			}
 		}
 
