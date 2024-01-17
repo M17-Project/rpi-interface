@@ -31,6 +31,7 @@
 //libm17
 #include <m17/m17.h>
 #include "term.h" //colored terminal font
+#define DEBUG_HALT				while(1);
 
 #define PORT					17000
 #define MAX_UDP_LEN				65535
@@ -83,6 +84,8 @@ enum rx_state_t rx_state=RX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
 struct LSF lsf; 							//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
+uint16_t fn, last_fn=0;						//current and last received FN
+uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -310,7 +313,7 @@ void dev_set_rx_freq(uint32_t freq)
 	cmd[1]=6;
 	*((uint32_t*)&cmd[2])=freq;
 	write(fd, cmd, cmd[1]);
-	usleep(10000);
+	usleep(5000U);
 }
 
 void dev_set_tx_freq(uint32_t freq)
@@ -320,7 +323,7 @@ void dev_set_tx_freq(uint32_t freq)
 	cmd[1]=6;
 	*((uint32_t*)&cmd[2])=freq;
 	write(fd, cmd, cmd[1]);
-	usleep(10000);
+	usleep(5000U);
 }
 
 void dev_set_freq_corr(int16_t corr)
@@ -330,7 +333,7 @@ void dev_set_freq_corr(int16_t corr)
 	cmd[1]=4;
 	*((int16_t*)&cmd[2])=corr;
 	write(fd, cmd, cmd[1]);
-	usleep(10000);
+	usleep(5000U);
 }
 
 void dev_set_afc(uint8_t en)
@@ -341,6 +344,7 @@ void dev_set_afc(uint8_t en)
 	cmd[2]=en?1:0;
 
 	write(fd, cmd, cmd[1]);
+	usleep(5000U);
 }
 
 void dev_set_tx_power(float power) //powr in dBm
@@ -350,7 +354,7 @@ void dev_set_tx_power(float power) //powr in dBm
 	cmd[1]=3;
 	cmd[2]=roundf(power*4.0f);
 	write(fd, cmd, cmd[1]);
-	usleep(10000);
+	usleep(5000U);
 }
 
 void dev_start_tx(void)
@@ -414,7 +418,7 @@ int main(int argc, char* argv[])
 	gpio_init();
 	gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
 	gpio_set(PA_EN, 0);
-	usleep(50000U); //50ms
+	usleep(10000U); //50ms
 	gpio_set(nRST, 1);
 	usleep(1000000U); //1s for RRU boot-up
 	dbg_print(TERM_GREEN, " OK\n");
@@ -532,7 +536,12 @@ int main(int argc, char* argv[])
 			symbols[15]=f_flt_buff[15*5];
 
 			float dist_lsf=eucl_norm(&symbols[0], lsf_sync_ext, 16); //check against extended LSF syncword (8 symbols, alternating -3/+3)
-			float dist_str=eucl_norm(&symbols[8], str_sync_symbols, 8); //TODO: instead of checking 1 SW, try looking for 2
+			float dist_str_a=eucl_norm(&symbols[8], str_sync_symbols, 8); //TODO: instead of checking 1 SW, try looking for 2
+			for(uint8_t i=0; i<15; i++)
+				symbols[i]=f_flt_buff[960+i*5];
+			symbols[15]=f_flt_buff[960+15*5];
+			float dist_str_b=eucl_norm(&symbols[8], str_sync_symbols, 8);
+			float dist_str=sqrtf(dist_str_a*dist_str_a+dist_str_b*dist_str_b);
 
 			//fwrite(&dist_str, 4, 1, fp);
 			if(dist_lsf<=4.5f && rx_state==RX_IDLE)
@@ -551,7 +560,6 @@ int main(int argc, char* argv[])
 
 				float pld[SYM_PER_PLD];
 				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
-				uint8_t lsf_b[30+1];
 
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
@@ -586,14 +594,20 @@ int main(int argc, char* argv[])
 
 				if(!CRC_M17(lsf_b, 30)) //if CRC valid
 				{
-					rx_state=RX_SYNCD; //change RX state
+					rx_state=RX_SYNCD;	//change RX state
+					sample_cnt=0;		//reset rx timeout timer
+
+					last_fn=0xFFFFU;
+
+					m17stream.fn=0;
+					m17stream.sid=rand()%0x10000U;
 
 					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
 					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
-					*((uint16_t*)&refl_pld[4])=rand()%0x10000U;					//SID
+					*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
 					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
-					*((uint16_t*)&refl_pld[34])=0;								//FN
-					memset(&refl_pld[36], 0, 128/8);							//payload (zeros)
+					*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
+					memset(&refl_pld[36], 0, 128/8);							//payload (zeros, because this is LSF)
 					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
 					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
 					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
@@ -610,17 +624,24 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_RED, " CRC ERR\n");
 				}
 			}
-			else if(dist_str<=3.5f)// && rx_state==RX_SYNCD)
+			else if(dist_str<=5.0f && rx_state==RX_SYNCD)
 			{
+				sample_cnt=0;		//reset rx timeout timer
+
 				//find L2's minimum
 				uint8_t sample_offset=0;
 				for(uint8_t i=1; i<=2; i++)
 				{
 					for(uint8_t j=0; j<15; j++)
 						symbols[j]=f_flt_buff[j*5+i];
-					symbols[8]=f_flt_buff[15*5+i];
-					float tmp=eucl_norm(&symbols[8], str_sync_symbols, 8);
-					if(tmp<dist_lsf)
+					symbols[15]=f_flt_buff[15*5+i];
+					float tmp_a=eucl_norm(&symbols[8], str_sync_symbols, 8);
+					for(uint8_t j=0; j<15; j++)
+						symbols[j]=f_flt_buff[960+j*5+i];
+					symbols[15]=f_flt_buff[960+15*5+i];
+					float tmp_b=eucl_norm(&symbols[8], str_sync_symbols, 8);
+
+					if(sqrtf(tmp_a*tmp_a+tmp_b*tmp_b)<dist_str)
 						sample_offset=i;
 				}
 
@@ -644,22 +665,46 @@ int main(int argc, char* argv[])
                 }
 
 				uint32_t e=viterbi_decode_punctured(frame_data, enc_data, puncture_pattern_2, 2*SYM_PER_PLD-96, sizeof(puncture_pattern_2));
-				uint16_t fn=(frame_data[1]<<8)|frame_data[2];
+				//shift the buffer 1 position left - get rid of the encoded flushing bits
+                for(uint8_t i=0; i<19-1; i++)
+                    frame_data[i]=frame_data[i+1];
+				fn=(frame_data[0]<<8)|frame_data[1];
 				
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
+				
+				if(((last_fn+1)&0xFFFFU)==fn) //TODO: maybe a timeout would be better
+				{
+					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR FRM: ",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_YELLOW, " FN:%04X", fn);
+					/*dbg_print(TERM_YELLOW, " | PLD: ");
+					for(uint8_t i=0; i<128/8; i++)
+						dbg_print(TERM_YELLOW, "%02X", frame_data[2+i]);*/
+					dbg_print(TERM_YELLOW, " | MER: %-3.1f%%\n",
+						(float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+					
+					m17stream.fn=fn;
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR FRM: ",
-					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-				dbg_print(TERM_YELLOW, " FN:%04X", fn);
-				dbg_print(TERM_YELLOW, "\n");
+					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
+					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
+					*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
+					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
+					*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
+					memcpy(&refl_pld[36], &frame_data[2], 128/8);				//payload (zeros)
+					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
+					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
+					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
+
+					last_fn=fn;
+				}
 			}
 			
 			//RX sync timeout
 			if(rx_state==RX_SYNCD)
 			{
 				sample_cnt++;
-				if(sample_cnt==1440)
+				if(sample_cnt==960*2)
 				{
 					rx_state=RX_IDLE;
 					sample_cnt=0;
