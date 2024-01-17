@@ -589,7 +589,7 @@ int main(int argc, char* argv[])
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR LSF:",
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RF LSF:",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 
 				if(!CRC_M17(lsf_b, 30)) //if CRC valid
@@ -675,7 +675,7 @@ int main(int argc, char* argv[])
 				
 				if(((last_fn+1)&0xFFFFU)==fn) //TODO: maybe a timeout would be better
 				{
-					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] STR FRM: ",
+					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RF FRM: ",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					dbg_print(TERM_YELLOW, " FN:%04X", fn);
 					/*dbg_print(TERM_YELLOW, " | PLD: ");
@@ -764,15 +764,21 @@ int main(int argc, char* argv[])
 				memset(samples, 0, 960);
 				write(fd, (uint8_t*)samples, 960);
 
-				printf("SID: %04X FN: %04X DST: %s SRC: %s TYPE: %04X META: ",
+				time(&rawtime);
+    			timeinfo=localtime(&rawtime);
+
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] NET FRM: ",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_YELLOW, "SID: %04X | FN: %04X | DST: %-9s | SRC: %-9s | TYPE: %04X | META: ",
 						m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, *((uint16_t*)m17stream.lsf.type));
 				for(uint8_t i=0; i<14; i++)
-					printf("%02X", m17stream.lsf.meta[i]);
-				printf("\n");
+					dbg_print(TERM_YELLOW, "%02X", m17stream.lsf.meta[i]);
+				dbg_print(TERM_YELLOW, "\n");
 
 				if(m17stream.fn&0x8000U)
 				{
-					printf("Stream end\n");
+					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(200000U); //wait 200ms (5 M17 frames)
 					gpio_set(PA_EN, 0);
 				}
