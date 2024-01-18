@@ -56,8 +56,17 @@ int tx_len=0, rx_len=0;
 int socket_byte_count=0; //data available for reading at the socket
 
 //config stuff
-uint8_t cfg_uart[64]={0}, cfg_call[15]={0}, cfg_module[5]={0};
-uint64_t enc_callsign=0;
+struct config_t
+{
+	uint8_t uart[64];
+	uint8_t node[15];
+	uint8_t module;
+	uint64_t enc_node;
+	int16_t freq_corr;
+	float tx_pwr;
+	uint32_t rx_freq;
+	uint32_t tx_freq;
+} config;
 
 //device stuff
 uint8_t cmd[8];
@@ -186,6 +195,65 @@ void rtrim(uint8_t* inp)
 			inp[i]=0;
 			break;
 		}
+	}
+}
+
+int8_t load_config(struct config_t *cfg, char *path)
+{
+	FILE* cfg_fp=fopen(path, "r");
+	char line[128];
+
+	if(cfg_fp!=NULL)
+	{
+		//mindlessly load all the values, we will perform sanity checks later
+		while(fgets((char*)line, sizeof(line), cfg_fp)>(char*)0)
+		{
+			if(strstr(line, "dev")!=NULL)
+			{
+				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
+				cfg->uart[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+			}
+			if(strstr(line, "name")!=NULL)
+			{
+				memcpy((char*)&(cfg->node), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
+				cfg->node[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+			}
+			else if(strstr(line, "module")!=NULL)
+			{
+				cfg->module=line[strstr(line, "\"")-line+1];
+			}
+			else if(strstr(line, "tx_freq")!=NULL)
+			{
+				cfg->tx_freq=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "rx_freq")!=NULL)
+			{
+				cfg->rx_freq=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "freq_corr")!=NULL)
+			{
+				cfg->freq_corr=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "tx_pwr")!=NULL)
+			{
+				cfg->tx_pwr=atof(&line[strstr(line, "=")-line+1]);
+			}
+		}
+
+		fclose(cfg_fp);
+		return 0; //file read OK
+	}
+	else
+	{
+		//load defaults
+		sprintf((char*)cfg->uart, "/dev/ttyS0");
+		sprintf((char*)cfg->node, "N0CALL H");
+		cfg->module='A';
+		cfg->rx_freq=433475000U;
+		cfg->tx_freq=435000000U;
+		cfg->freq_corr=0;
+		cfg->tx_pwr=37.0f;
+		return -1; //error reading file
 	}
 }
 
@@ -396,20 +464,30 @@ int main(int argc, char* argv[])
 
 	//-----------------------------------config read-----------------------------------
 	dbg_print(0, "Reading config file...");
-	FILE* cfg_fp=fopen(argv[2], "r");
-	if(cfg_fp!=NULL)
+	if(load_config(&config, argv[2])==0)
 	{
-		fgets((char*)cfg_uart, sizeof(cfg_uart), cfg_fp);
-		fgets((char*)cfg_call, sizeof(cfg_call), cfg_fp);
-		fgets((char*)cfg_module, sizeof(cfg_module), cfg_fp);
-		rtrim(cfg_uart);
-		rtrim(cfg_call);
-		fclose(cfg_fp);
 		dbg_print(TERM_GREEN, " OK\n");
 	}
 	else
 	{
 		dbg_print(TERM_RED, " error reading %s\nExiting\n", argv[2]);
+		return 1;
+	}
+
+	//basic sanity checks
+	if(config.rx_freq<420000000U || config.rx_freq>450000000U)
+	{
+		dbg_print(TERM_RED, "Invalid RX frequency\nExiting\n");
+		return 1;
+	}
+	if(config.tx_freq<420000000U || config.tx_freq>450000000U)
+	{
+		dbg_print(TERM_RED, "Invalid TX frequency\nExiting\n");
+		return 1;
+	}
+	if(config.tx_pwr<0.0f || config.tx_pwr>47.0f)
+	{
+		dbg_print(TERM_RED, "Invalid TX power\nExiting\n");
 		return 1;
 	}
 
@@ -424,8 +502,8 @@ int main(int argc, char* argv[])
 	dbg_print(TERM_GREEN, " OK\n");
 
 	//-----------------------------------device part-----------------------------------
-	dbg_print(0, "UART init (%s)...", (char*)cfg_uart);
-	fd=open((char*)cfg_uart, O_RDWR | O_NOCTTY | O_SYNC);
+	dbg_print(0, "UART init (%s)...", (char*)config.uart);
+	fd=open((char*)config.uart, O_RDWR | O_NOCTTY | O_SYNC);
 	if(fd==0)
 	{
 		dbg_print(TERM_RED, " error\nExiting\n");
@@ -483,12 +561,12 @@ int main(int argc, char* argv[])
 	memset((char*)&daddr, 0, sizeof(daddr));
 
 	//encode M17 callsign from argv
-	encode_callsign_value(&enc_callsign, cfg_call);
+	encode_callsign_value(&(config.enc_node), config.node);
 
 	//send "CONN"
-	sprintf((char*)tx_buff, "CONN123456%c", cfg_module[0]);
+	sprintf((char*)tx_buff, "CONN123456%c", config.module);
 	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-		tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
+		tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
 	refl_send(tx_buff, 4+6+1);
 	dbg_print(TERM_GREEN, " OK\n");
 
@@ -725,7 +803,7 @@ int main(int argc, char* argv[])
 			{
 				sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
 				for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-					tx_buff[4+5-i]=*((uint8_t*)&enc_callsign+i);
+					tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
 				refl_send(tx_buff, 4+6); //PONG
 				memset((uint8_t*)rx_buff, 0, rx_len);
 				//dbg_print(TERM_YELLOW, "PING\n");
