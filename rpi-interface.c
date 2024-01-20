@@ -466,6 +466,25 @@ void dev_stop_rx(void)
 
 int main(int argc, char* argv[])
 {
+	if(argc==2)
+	{
+		if(strstr(argv[1], (char*)"-r")) //device reset
+		{
+			uint8_t gpio_err=0;
+			gpio_init();
+			gpio_err|=gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
+			gpio_err|=gpio_set(PA_EN, 0);
+			usleep(50000U); //50ms
+			gpio_err|=gpio_set(nRST, 1);
+			dbg_print(0, "Device reset");
+			if(gpio_err)
+				dbg_print(TERM_RED, " error\n");
+			else
+				dbg_print(TERM_GREEN, " OK\n");
+			return (int)gpio_err;
+		}
+	}
+
 	if(argc!=3)
 	{
 		dbg_print(TERM_RED, "Invalid params\nExiting\n");
@@ -510,7 +529,7 @@ int main(int argc, char* argv[])
 	gpio_init();
 	gpio_err|=gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
 	gpio_err|=gpio_set(PA_EN, 0);
-	usleep(10000U); //50ms
+	usleep(50000U); //50ms
 	gpio_err|=gpio_set(nRST, 1);
 	usleep(1000000U); //1s for RRU boot-up
 	if(gpio_err==0)
