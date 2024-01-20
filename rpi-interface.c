@@ -39,7 +39,7 @@
 #define nRST					17
 #define PA_EN					18
 
-#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/pow(2, 21)*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`
+#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`, 2097152=2^21
 
 //internet
 struct sockaddr_in source, dest; 
@@ -708,8 +708,9 @@ int main(int argc, char* argv[])
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RF LSF:",
-						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(0, "[%02d:%02d:%02d]",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_YELLOW, " RF LSF:");
 
 				if(!CRC_M17(lsf_b, 30)) //if CRC valid
 				{
@@ -777,6 +778,11 @@ int main(int argc, char* argv[])
 				randomize_soft_bits(soft_bit);
 				reorder_soft_bits(d_soft_bit, soft_bit);
 
+				//decode LICH
+				uint8_t lich[6];
+				decode_LICH(lich, d_soft_bit);
+                uint8_t lich_cnt=lich[5]>>5;
+
 				uint16_t enc_data[272];
 				for(uint16_t i=0; i<272; i++)
                 {
@@ -794,9 +800,10 @@ int main(int argc, char* argv[])
 				
 				if(((last_fn+1)&0xFFFFU)==fn) //TODO: maybe a timeout would be better
 				{
-					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RF FRM: ",
+					dbg_print(0, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-					dbg_print(TERM_YELLOW, " FN:%04X", fn);
+					dbg_print(TERM_YELLOW, " RF FRM: ");
+					dbg_print(TERM_YELLOW, " FN:%04X | LICH_CNT:%d", fn, lich_cnt);
 					/*dbg_print(TERM_YELLOW, " | PLD: ");
 					for(uint8_t i=0; i<128/8; i++)
 						dbg_print(TERM_YELLOW, "%02X", frame_data[2+i]);*/
