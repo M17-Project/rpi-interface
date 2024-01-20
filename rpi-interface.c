@@ -66,6 +66,7 @@ struct config_t
 	float tx_pwr;
 	uint32_t rx_freq;
 	uint32_t tx_freq;
+	uint8_t afc;
 } config;
 
 //device stuff
@@ -95,6 +96,8 @@ struct LSF lsf; 							//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
 uint16_t fn, last_fn=0;						//current and last received FN
 uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
+
+uint8_t uart_byte_count;					//how many bytes are available on UART
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -152,9 +155,9 @@ int set_interface_attribs(int fd, int speed, int parity)
 	tty.c_cflag &= ~CSTOPB;
 	tty.c_cflag &= ~CRTSCTS;
 
-	if(tcsetattr(fd, TCSANOW, &tty) != 0)
-	{
-		dbg_print(TERM_RED, "Error from tcsetattr\n");
+	if(tcsetattr(fd, TCSANOW, &tty)!=0)
+	{		
+		dbg_print(TERM_RED, " Error from tcsetattr\n");
 		return -1;
 	}
 	
@@ -165,18 +168,18 @@ void set_blocking(int fd, int should_block)
 {
 	struct termios tty;
 	memset(&tty, 0, sizeof tty);
-	if(tcgetattr(fd, &tty) != 0)
+	if(tcgetattr(fd, &tty)!=0)
 	{
-		dbg_print(TERM_RED, "Error from tggetattr\n");
+		dbg_print(TERM_YELLOW, " Error from tggetattr\n");
 		return;
 	}
 
 	tty.c_cc[VMIN]  = should_block ? 1 : 0;
 	tty.c_cc[VTIME] = 5;            // 0.5 seconds read timeout
 
-	if(tcsetattr(fd, TCSANOW, &tty) != 0)
+	if(tcsetattr(fd, TCSANOW, &tty)!=0)
 	{
-		dbg_print(TERM_YELLOW, "Error setting UART attributes\n");
+		dbg_print(TERM_YELLOW, " Error setting UART attributes\n");
 	}
 }
 
@@ -238,6 +241,13 @@ int8_t load_config(struct config_t *cfg, char *path)
 			{
 				cfg->tx_pwr=atof(&line[strstr(line, "=")-line+1]);
 			}
+			else if(strstr(line, "afc")!=NULL)
+			{
+				if(line[strstr(line, "=")-line+1]=='1')
+					cfg->afc=1;
+				else
+					cfg->afc=0;
+			}
 		}
 
 		fclose(cfg_fp);
@@ -253,6 +263,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 		cfg->tx_freq=435000000U;
 		cfg->freq_corr=0;
 		cfg->tx_pwr=37.0f;
+		cfg->afc=0;
 		return -1; //error reading file
 	}
 }
@@ -315,7 +326,7 @@ void gpio_init(void)
 	}
 }
 
-void gpio_set(uint8_t gpio, uint8_t state)
+uint8_t gpio_set(uint8_t gpio, uint8_t state)
 {
 	FILE* fp=NULL;
 
@@ -346,10 +357,12 @@ void gpio_set(uint8_t gpio, uint8_t state)
 		}
 
 		fclose(fp);
+		return 0;
 	}
 	else
 	{
-		dbg_print(TERM_YELLOW, "Error - can not set GPIO%d value\n", gpio);
+		dbg_print(TERM_YELLOW, " Error - can not set GPIO%d value\n", gpio);
+		return 1;
 	}
 }
 
@@ -358,7 +371,7 @@ uint8_t refl_send(const uint8_t* msg, uint16_t len)
 {
 	if(sendto(sockt, msg, len, 0, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))<0)
     {
-        dbg_print(TERM_RED, "Error connecting with reflector.\nExiting.\n");
+        dbg_print(TERM_RED, " Error connecting with reflector.\nExiting.\n");
         return 1;
     }
 
@@ -493,16 +506,18 @@ int main(int argc, char* argv[])
 
 	//------------------------------------gpio init------------------------------------
 	dbg_print(0, "GPIO init...");
+	uint8_t gpio_err=0;
 	gpio_init();
-	gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
-	gpio_set(PA_EN, 0);
+	gpio_err|=gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
+	gpio_err|=gpio_set(PA_EN, 0);
 	usleep(10000U); //50ms
-	gpio_set(nRST, 1);
+	gpio_err|=gpio_set(nRST, 1);
 	usleep(1000000U); //1s for RRU boot-up
-	dbg_print(TERM_GREEN, " OK\n");
+	if(gpio_err==0)
+		dbg_print(TERM_GREEN, " OK\n");
 
 	//-----------------------------------device part-----------------------------------
-	dbg_print(0, "UART init (%s)...", (char*)config.uart);
+	dbg_print(0, "UART init: (%s)...", (char*)config.uart);
 	fd=open((char*)config.uart, O_RDWR | O_NOCTTY | O_SYNC);
 	if(fd==0)
 	{
@@ -516,32 +531,35 @@ int main(int argc, char* argv[])
 
 	//PING-PONG test
 	dbg_print(0, "Device's reply to PING...");
-	uint8_t trash;
-	while(read(fd, &trash, 1)); //read all trash
 
-	uint8_t ping_test[3];
 	dev_ping();
-	while(read(fd, &ping_test[0], 1)==0);
-	while(read(fd, &ping_test[1], 1)==0);
-	while(read(fd, &ping_test[2], 1)==0);
-	if(ping_test[0]==0 && ping_test[1]==3 && ping_test[2]==0)
-		dbg_print(TERM_GREEN, " OK\n");
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=6);
+	uint8_t ping_test[6]={0};
+	read(fd, ping_test, 6);
+
+	uint32_t dev_err=((uint32_t)ping_test[5]<<24)|((uint32_t)ping_test[4]<<16)|((uint32_t)ping_test[3]<<8)|ping_test[2];
+	if(ping_test[0]==0 && ping_test[1]==6 && dev_err==0)
+		dbg_print(TERM_GREEN, " PONG OK\n");
 	else
 	{
-		dbg_print(TERM_YELLOW, " PONG error code: %d\n", ping_test[2]);
+		dbg_print(TERM_YELLOW, " PONG error code: 0x%04X\n", dev_err);
 		//return 1;
 	}
 
 	//config the device
-	dbg_print(0, "Configuring device... ");
-	dev_set_rx_freq(433475000U);
-	dev_set_tx_freq(435000000U);
-	dev_set_freq_corr(-9);
-	dev_set_tx_power(37.0f);
-	dbg_print(TERM_GREEN, " done\n");
-
-	dev_set_afc(1);
-	dbg_print(TERM_GREEN, "AFC enabled\n");
+	dbg_print(0, "RX frequency: %lu Hz\n", config.rx_freq); dev_set_rx_freq(config.rx_freq);
+	dbg_print(0, "TX frequency: %lu Hz\n", config.tx_freq); dev_set_tx_freq(config.tx_freq);
+	dbg_print(0, "Frequency correction: %d\n", config.freq_corr); dev_set_freq_corr(config.freq_corr);
+	dbg_print(0, "TX power: %2.2f dBm\n", config.tx_pwr); dev_set_tx_power(config.tx_pwr);
+	dbg_print(0, "AFC "); dev_set_afc(config.afc);
+	if(config.afc)
+		dbg_print(TERM_GREEN, "enabled\n");
+	else
+		dbg_print(TERM_YELLOW, "disabled\n");
 
 	//-----------------------------------internet part-----------------------------------
 	dbg_print(0, "Connecting to %s", argv[1]);
@@ -591,8 +609,12 @@ int main(int argc, char* argv[])
 
 	while(1)
 	{
-		if(read(fd, (uint8_t*)&rx_bsb_sample, 1)==1)
+		//are there any new baseband samples to process?
+		ioctl(fd, FIONREAD, &uart_byte_count);
+		if(uart_byte_count>0)
 		{
+			read(fd, (uint8_t*)&rx_bsb_sample, 1);
+
 			//push buffer
 			for(uint8_t i=0; i<sizeof(flt_buff)-1; i++)
 				flt_buff[i]=flt_buff[i+1];
