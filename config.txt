@@ -1,5 +1,6 @@
 #Main settings
 dev="/dev/ttyS0"    #UART port to use
+speed=460800        #UART's speed
 name="N0CALL H"     #callsign with a suffix
 module="Z"          #single letter
 
