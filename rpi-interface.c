@@ -59,6 +59,7 @@ int socket_byte_count=0; //data available for reading at the socket
 struct config_t
 {
 	uint8_t uart[64];
+	uint32_t uart_rate;
 	uint8_t node[15];
 	uint8_t module;
 	uint64_t enc_node;
@@ -124,7 +125,52 @@ void dbg_print(const char* color_code, const char* fmt, ...)
 //UART magic
 int fd; //UART handle
 
-int set_interface_attribs(int fd, int speed, int parity)
+int get_baud(uint32_t baud)
+{
+    switch(baud)
+	{
+		case 9600:
+			return B9600;
+		case 19200:
+			return B19200;
+		case 38400:
+			return B38400;
+		case 57600:
+			return B57600;
+		case 115200:
+			return B115200;
+		case 230400:
+			return B230400;
+		case 460800:
+			return B460800;
+		case 500000:
+			return B500000;
+		case 576000:
+			return B576000;
+		case 921600:
+			return B921600;
+		case 1000000:
+			return B1000000;
+		case 1152000:
+			return B1152000;
+		case 1500000:
+			return B1500000;
+		case 2000000:
+			return B2000000;
+		case 2500000:
+			return B2500000;
+		case 3000000:
+			return B3000000;
+		case 3500000:
+			return B3500000;
+		case 4000000:
+			return B4000000;
+		default: 
+			return -1;
+    }
+}
+
+int set_interface_attribs(int fd, uint32_t speed, int parity)
 {
 	struct termios tty;
 	if (tcgetattr (fd, &tty) != 0)
@@ -133,8 +179,8 @@ int set_interface_attribs(int fd, int speed, int parity)
 		return -1;
  	}
 
-	cfsetospeed (&tty, speed);
-	cfsetispeed (&tty, speed);
+	cfsetospeed(&tty, get_baud(speed));
+	cfsetispeed(&tty, get_baud(speed));
 
 	tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;     // 8-bit chars
 	// disable IGNBRK for mismatched speed tests; otherwise receive break
@@ -211,12 +257,16 @@ int8_t load_config(struct config_t *cfg, char *path)
 		//mindlessly load all the values, we will perform sanity checks later
 		while(fgets((char*)line, sizeof(line), cfg_fp)>(char*)0)
 		{
-			if(strstr(line, "dev")!=NULL)
+			if(strstr(line, "device")!=NULL)
 			{
 				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
 				cfg->uart[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
 			}
-			if(strstr(line, "name")!=NULL)
+			else if(strstr(line, "speed")!=NULL)
+			{
+				cfg->uart_rate=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "name")!=NULL)
 			{
 				memcpy((char*)&(cfg->node), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
 				cfg->node[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
@@ -257,6 +307,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 	{
 		//load defaults
 		sprintf((char*)cfg->uart, "/dev/ttyS0");
+		cfg->uart_rate=460800;
 		sprintf((char*)cfg->node, "N0CALL H");
 		cfg->module='A';
 		cfg->rx_freq=433475000U;
@@ -545,7 +596,7 @@ int main(int argc, char* argv[])
 	}
 	
 	set_blocking(fd, 0);
-	set_interface_attribs(fd, B460800, 0);
+	set_interface_attribs(fd, config.uart_rate, 0);
 	dbg_print(TERM_GREEN, " OK\n");
 
 	//PING-PONG test
