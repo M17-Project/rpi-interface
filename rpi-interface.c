@@ -788,6 +788,14 @@ int main(int argc, char* argv[])
 						dbg_print(TERM_GREEN, " CRC OK ");
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
 							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+						FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
+						if(logfile!=NULL)
+						{
+							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"%d\" \"%3.1f%%\"\n",
+								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+								call_src, call_dst, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+							fclose(logfile);
+						}
 					}
 				}
 				else
