@@ -97,6 +97,9 @@ struct LSF lsf; 							//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
 uint16_t fn, last_fn=0;						//current and last received FN
 uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
+uint8_t first_frame=1;						//first decoded frame after SYNC?
+uint8_t lich_parts=0;						//LICH chunks received (bit flags)
+uint8_t got_lsf=0;							//got LSF? either from LSF or reconstructed from LICH
 
 uint8_t uart_byte_count;					//how many bytes are available on UART
 
@@ -765,6 +768,7 @@ int main(int argc, char* argv[])
 
 				if(!CRC_M17(lsf_b, 30)) //if CRC valid
 				{
+					got_lsf=1;
 					rx_state=RX_SYNCD;	//change RX state
 					sample_cnt=0;		//reset rx timeout timer
 
@@ -803,8 +807,9 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_RED, " CRC ERR\n");
 				}
 			}
-			else if(dist_str<=5.0f && rx_state==RX_SYNCD)
+			else if(dist_str<=5.0f)// && rx_state==RX_SYNCD)
 			{
+				rx_state=RX_SYNCD;
 				sample_cnt=0;		//reset rx timeout timer
 
 				//find L2's minimum
@@ -841,6 +846,16 @@ int main(int argc, char* argv[])
 				uint8_t lich[6];
 				decode_LICH(lich, d_soft_bit);
                 uint8_t lich_cnt=lich[5]>>5;
+				if(lich_parts!=0x3FU) //6 chunks = 0b111111
+					lich_parts|=(1<<lich_cnt);
+
+				if(lich_parts==0x3FU) //collected all of them?
+				{
+					//TODO: reconstruct LSF
+					;
+
+					//got_lsf=1;
+				}
 
 				uint16_t enc_data[272];
 				for(uint16_t i=0; i<272; i++)
@@ -854,6 +869,12 @@ int main(int argc, char* argv[])
                     frame_data[i]=frame_data[i+1];
 				fn=(frame_data[0]<<8)|frame_data[1];
 				
+				//set the last FN number to FN-1 if this is a late-join and the frame data is valid
+				if(first_frame==1 && (fn%6)==lich_cnt)
+				{
+					last_fn=fn-1;
+				}
+
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
 				
@@ -868,21 +889,25 @@ int main(int argc, char* argv[])
 						dbg_print(TERM_YELLOW, "%02X", frame_data[2+i]);*/
 					dbg_print(TERM_YELLOW, " | MER: %-3.1f%%\n",
 						(float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
-					
-					m17stream.fn=fn;
 
-					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
-					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
-					*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
-					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
-					*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
-					memcpy(&refl_pld[36], &frame_data[2], 128/8);				//payload (zeros)
-					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
-					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
-					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
+					if(got_lsf)
+					{
+						m17stream.fn=fn;
+						uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
+						sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
+						*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
+						memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
+						*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
+						memcpy(&refl_pld[36], &frame_data[2], 128/8);				//payload (zeros)
+						uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
+						*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
+						refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
+					}
 
 					last_fn=fn;
 				}
+
+				first_frame=0;
 			}
 			
 			//RX sync timeout
@@ -893,6 +918,10 @@ int main(int argc, char* argv[])
 				{
 					rx_state=RX_IDLE;
 					sample_cnt=0;
+					first_frame=1;
+					last_fn=0xFFFFU;
+					lich_parts=0;
+					got_lsf=0;
 				}
 			}
 		}
