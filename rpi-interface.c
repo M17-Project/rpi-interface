@@ -761,7 +761,6 @@ int main(int argc, char* argv[])
 
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
-
 				dbg_print(0, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, " RF LSF:");
@@ -795,6 +794,8 @@ int main(int argc, char* argv[])
 						FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
 						if(logfile!=NULL)
 						{
+							time(&rawtime);
+    						timeinfo=localtime(&rawtime);
 							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"%3.1f%%\"\n",
 								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 								call_src, call_dst, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
@@ -846,15 +847,41 @@ int main(int argc, char* argv[])
 				uint8_t lich[6];
 				decode_LICH(lich, d_soft_bit);
                 uint8_t lich_cnt=lich[5]>>5;
+
 				if(lich_parts!=0x3FU) //6 chunks = 0b111111
-					lich_parts|=(1<<lich_cnt);
-
-				if(lich_parts==0x3FU) //collected all of them?
 				{
-					//TODO: reconstruct LSF
-					;
+					//reconstruct LSF chunk by chunk
+					memcpy(&lsf_b[lich_cnt*5], lich, 40/8); //40 bits
+					lich_parts|=(1<<lich_cnt);
+					if(lich_parts==0x3FU && got_lsf==0) //collected all of them?
+					{
+						got_lsf=1;
+						m17stream.sid=rand()%0x10000U;
 
-					//got_lsf=1;
+						uint8_t call_dst[10]={0}, call_src[10]={0};
+						//uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
+
+						//swap order
+						/*for(uint8_t i=0; i<3; i++)
+						{
+							uint8_t tmp;
+							tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
+							tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
+						}*/
+
+						decode_callsign_bytes(call_dst, &lsf_b[0]);
+						decode_callsign_bytes(call_src, &lsf_b[6]);
+
+						time(&rawtime);
+    					timeinfo=localtime(&rawtime);
+						dbg_print(0, "[%02d:%02d:%02d] ",
+							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+						//dbg_print(TERM_YELLOW, "LSF REC:  DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
+							//call_dst, call_src, can, 0.0f);
+						for(uint8_t i=0; i<(48+48+16+112+16)/8; i++)
+							dbg_print(TERM_YELLOW, "%02X", lsf_b[i]);
+						dbg_print(TERM_YELLOW, "\n");
+					}
 				}
 
 				uint16_t enc_data[272];
@@ -874,12 +901,12 @@ int main(int argc, char* argv[])
 				{
 					last_fn=fn-1;
 				}
-
-				time(&rawtime);
-    			timeinfo=localtime(&rawtime);
 				
 				if(((last_fn+1)&0xFFFFU)==fn) //TODO: maybe a timeout would be better
 				{
+					time(&rawtime);
+    				timeinfo=localtime(&rawtime);
+
 					dbg_print(0, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					dbg_print(TERM_YELLOW, " RF FRM: ");
@@ -994,6 +1021,9 @@ int main(int argc, char* argv[])
 					FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
 					if(logfile!=NULL)
 					{
+						time(&rawtime);
+    					timeinfo=localtime(&rawtime);
+
 						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
 							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 							src_call, dst_call);
@@ -1003,6 +1033,9 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn&0x8000U)
 				{
+					time(&rawtime);
+    				timeinfo=localtime(&rawtime);
+
 					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(200000U); //wait 200ms (5 M17 frames)
