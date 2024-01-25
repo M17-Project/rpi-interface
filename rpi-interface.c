@@ -791,7 +791,7 @@ int main(int argc, char* argv[])
 						FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
 						if(logfile!=NULL)
 						{
-							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"%d\" \"%3.1f%%\"\n",
+							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"%3.1f%%\"\n",
 								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 								call_src, call_dst, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 							fclose(logfile);
@@ -959,6 +959,18 @@ int main(int argc, char* argv[])
 				for(uint8_t i=0; i<14; i++)
 					dbg_print(TERM_YELLOW, "%02X", m17stream.lsf.meta[i]);
 				dbg_print(TERM_YELLOW, "\n");
+
+				if(m17stream.fn==0U)
+				{
+					FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
+					if(logfile!=NULL)
+					{
+						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
+							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+							src_call, dst_call);
+						fclose(logfile);
+					}
+				}
 
 				if(m17stream.fn&0x8000U)
 				{
