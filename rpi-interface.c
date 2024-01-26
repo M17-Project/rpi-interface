@@ -58,6 +58,7 @@ int socket_byte_count=0; //data available for reading at the socket
 //config stuff
 struct config_t
 {
+	uint8_t log_path[128];
 	uint8_t uart[64];
 	uint32_t uart_rate;
 	uint8_t node[15];
@@ -255,12 +256,30 @@ int8_t load_config(struct config_t *cfg, char *path)
 	FILE* cfg_fp=fopen(path, "r");
 	char line[128];
 
+	//load defaults
+	sprintf((char*)cfg->log_path, "/var/www/html/files/log.txt");
+	sprintf((char*)cfg->uart, "/dev/ttyS0");
+	cfg->uart_rate=460800;
+	sprintf((char*)cfg->node, "N0CALL H");
+	cfg->module='A';
+	cfg->rx_freq=433475000U;
+	cfg->tx_freq=435000000U;
+	cfg->freq_corr=0;
+	cfg->tx_pwr=37.0f;
+	cfg->afc=0;
+
+	//overwrite settings
 	if(cfg_fp!=NULL)
 	{
 		//mindlessly load all the values, we will perform sanity checks later
 		while(fgets((char*)line, sizeof(line), cfg_fp)>(char*)0)
 		{
-			if(strstr(line, "device")!=NULL)
+			if(strstr(line, "log_path")!=NULL)
+			{
+				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
+				cfg->log_path[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+			}
+			else if(strstr(line, "device")!=NULL)
 			{
 				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
 				cfg->uart[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
@@ -308,16 +327,6 @@ int8_t load_config(struct config_t *cfg, char *path)
 	}
 	else
 	{
-		//load defaults
-		sprintf((char*)cfg->uart, "/dev/ttyS0");
-		cfg->uart_rate=460800;
-		sprintf((char*)cfg->node, "N0CALL H");
-		cfg->module='A';
-		cfg->rx_freq=433475000U;
-		cfg->tx_freq=435000000U;
-		cfg->freq_corr=0;
-		cfg->tx_pwr=37.0f;
-		cfg->afc=0;
 		return -1; //error reading file
 	}
 }
@@ -577,6 +586,8 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
+	dbg_print(0, "Storing traffic in %s\n", config.log_path);
+
 	//------------------------------------gpio init------------------------------------
 	dbg_print(0, "GPIO init...");
 	uint8_t gpio_err=0;
@@ -590,7 +601,7 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_GREEN, " OK\n");
 
 	//-----------------------------------device part-----------------------------------
-	dbg_print(0, "UART init: (%s)...", (char*)config.uart);
+	dbg_print(0, "UART init: %s at %d...", (char*)config.uart, config.uart_rate);
 	fd=open((char*)config.uart, O_RDWR | O_NOCTTY | O_SYNC);
 	if(fd==0)
 	{
@@ -791,7 +802,7 @@ int main(int argc, char* argv[])
 						dbg_print(TERM_GREEN, " CRC OK ");
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
 							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
-						FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
+						FILE* logfile=fopen((char*)config.log_path, "awb");
 						if(logfile!=NULL)
 						{
 							time(&rawtime);
@@ -880,6 +891,17 @@ int main(int argc, char* argv[])
 								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 							dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
 								call_dst, call_src, can);
+
+							FILE* logfile=fopen((char*)config.log_path, "awb");
+							if(logfile!=NULL)
+							{
+								time(&rawtime);
+								timeinfo=localtime(&rawtime);
+								fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"--\"\n",
+									timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+									call_src, call_dst, can);
+								fclose(logfile);
+							}
 						}
 						else
 						{
@@ -1022,7 +1044,7 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn==0U)
 				{
-					FILE* logfile=fopen("/var/www/html/files/log.txt", "awb");
+					FILE* logfile=fopen((char*)config.log_path, "awb");
 					if(logfile!=NULL)
 					{
 						time(&rawtime);
