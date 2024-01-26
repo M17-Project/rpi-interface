@@ -616,7 +616,18 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 
-	dbg_print(0, "Storing traffic in %s\n", config.log_path);
+	//check write access to the log file
+	FILE* logfile=fopen((char*)config.log_path, "awb");
+	if(logfile!=NULL)
+	{
+		dbg_print(0, "Storing traffic in %s\n", config.log_path);
+		fclose(logfile);
+	}
+	else
+	{
+		dbg_print(TERM_RED, "Cannot access %s\nExiting\n", config.log_path);
+		return 1;
+	}
 
 	//------------------------------------gpio init------------------------------------
 	dbg_print(0, "GPIO init...");
@@ -832,11 +843,12 @@ int main(int argc, char* argv[])
 						dbg_print(TERM_GREEN, " CRC OK ");
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
 							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+
 						FILE* logfile=fopen((char*)config.log_path, "awb");
 						if(logfile!=NULL)
 						{
 							time(&rawtime);
-    						timeinfo=localtime(&rawtime);
+							timeinfo=localtime(&rawtime);
 							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"%3.1f%%\"\n",
 								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 								call_src, call_dst, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
@@ -889,57 +901,6 @@ int main(int argc, char* argv[])
 				decode_LICH(lich, d_soft_bit);
                 uint8_t lich_cnt=lich[5]>>5;
 
-				if(lich_parts!=0x3FU) //6 chunks = 0b111111
-				{
-					//reconstruct LSF chunk by chunk
-					memcpy(&lsf_b[lich_cnt*5], lich, 40/8); //40 bits
-					lich_parts|=(1<<lich_cnt);
-					if(lich_parts==0x3FU && got_lsf==0) //collected all of them?
-					{
-						if(!CRC_M17(lsf_b, 30)) //CRC check
-						{
-							got_lsf=1;
-							m17stream.sid=rand()%0x10000U;
-
-							uint8_t call_dst[12]={0}, call_src[12]={0};
-							uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
-
-							//swap order
-							for(uint8_t i=0; i<3; i++)
-							{
-								uint8_t tmp;
-								tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
-								tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
-							}
-
-							decode_callsign_bytes(call_dst, &lsf_b[0]);
-							decode_callsign_bytes(call_src, &lsf_b[6]);
-
-							time(&rawtime);
-							timeinfo=localtime(&rawtime);
-							dbg_print(0, "[%02d:%02d:%02d] ",
-								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-							dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
-								call_dst, call_src, can);
-
-							FILE* logfile=fopen((char*)config.log_path, "awb");
-							if(logfile!=NULL)
-							{
-								time(&rawtime);
-								timeinfo=localtime(&rawtime);
-								fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"--\"\n",
-									timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
-									call_src, call_dst, can);
-								fclose(logfile);
-							}
-						}
-						else
-						{
-							lich_parts=0; //reset flags
-						}
-					}
-				}
-
 				uint16_t enc_data[272];
 				for(uint16_t i=0; i<272; i++)
                 {
@@ -958,8 +919,60 @@ int main(int argc, char* argv[])
 					last_fn=fn-1;
 				}
 				
-				if(((last_fn+1)&0xFFFFU)==fn) //TODO: maybe a timeout would be better
+				if(((last_fn+1)&0xFFFFU)==fn) //new frame. TODO: maybe a timeout would be better
 				{
+					if(lich_parts!=0x3FU) //6 chunks = 0b111111
+					{
+						//reconstruct LSF chunk by chunk
+						memcpy(&lsf_b[lich_cnt*5], lich, 40/8); //40 bits
+						lich_parts|=(1<<lich_cnt);
+						if(lich_parts==0x3FU && got_lsf==0) //collected all of them?
+						{
+							if(!CRC_M17(lsf_b, 30)) //CRC check
+							{
+								got_lsf=1;
+								m17stream.sid=rand()%0x10000U;
+
+								uint8_t call_dst[12]={0}, call_src[12]={0};
+								uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
+
+								//swap order
+								for(uint8_t i=0; i<3; i++)
+								{
+									uint8_t tmp;
+									tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
+									tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
+								}
+
+								decode_callsign_bytes(call_dst, &lsf_b[0]);
+								decode_callsign_bytes(call_src, &lsf_b[6]);
+
+								time(&rawtime);
+								timeinfo=localtime(&rawtime);
+								dbg_print(0, "[%02d:%02d:%02d] ",
+									timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+								dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
+									call_dst, call_src, can);
+
+								FILE* logfile=fopen((char*)config.log_path, "awb");
+								if(logfile!=NULL)
+								{
+									time(&rawtime);
+									timeinfo=localtime(&rawtime);
+									fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"--\"\n",
+										timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+										call_src, call_dst, can);
+									fclose(logfile);
+								}
+							}
+							else
+							{
+								dbg_print(TERM_YELLOW, "LSF CRC ERR\n");
+								lich_parts=0; //reset flags
+							}
+						}
+					}
+
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
 
@@ -1079,7 +1092,6 @@ int main(int argc, char* argv[])
 					{
 						time(&rawtime);
     					timeinfo=localtime(&rawtime);
-
 						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
 							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 							src_call, dst_call);
