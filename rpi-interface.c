@@ -38,6 +38,7 @@
 
 #define nRST					17
 #define PA_EN					18
+#define BOOT0					27
 
 #define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`, 2097152=2^21
 
@@ -331,12 +332,12 @@ int8_t load_config(struct config_t *cfg, char *path)
 	}
 }
 
-//GPIO - library-less, guerrilla style - we assume that only GPIO17 and 18 will be used
+//GPIO - library-less, guerrilla style - we assume that only GPIO17, 18 and 27 will be used
 void gpio_init(void)
 {
 	FILE* fp;
 	
-	//enable GPIO17 and GPIO18
+	//enable GPIO17, 18 and 27
 	fp=fopen("/sys/class/gpio/export", "wb");
 	if(fp!=NULL)
 	{
@@ -345,7 +346,7 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize GPIO17\nExiting\n");
 		exit(1);
 	}
 
@@ -357,7 +358,19 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize GPIO18\nExiting\n");
+		exit(1);
+	}
+
+	fp=fopen("/sys/class/gpio/export", "wb");
+	if(fp!=NULL)
+	{
+		fwrite("27", 2, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO27\nExiting\n");
 		exit(1);
 	}
 
@@ -372,7 +385,7 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize GPIO17\nExiting\n");
 		exit(1);
 	}
 
@@ -384,7 +397,19 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize GPIO18\nExiting\n");
+		exit(1);
+	}
+
+	fp=fopen("/sys/class/gpio/gpio27/direction", "wb");
+	if(fp!=NULL)
+	{
+		fwrite("out", 3, 1, fp);
+		fclose(fp);
+	}
+	else
+	{
+		dbg_print(TERM_RED, " can not initialize GPIO27\nExiting\n");
 		exit(1);
 	}
 }
@@ -401,6 +426,10 @@ uint8_t gpio_set(uint8_t gpio, uint8_t state)
 
 		case 18:
 			fp=fopen("/sys/class/gpio/gpio18/value", "wb");
+		break;
+
+		case 27:
+			fp=fopen("/sys/class/gpio/gpio27/value", "wb");
 		break;
 
 		default:
@@ -535,7 +564,8 @@ int main(int argc, char* argv[])
 		{
 			uint8_t gpio_err=0;
 			gpio_init();
-			gpio_err|=gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
+			gpio_err|=gpio_set(BOOT0, 0); //all pins should be at logic low already, but better be safe than sorry
+			gpio_err|=gpio_set(nRST, 0);
 			gpio_err|=gpio_set(PA_EN, 0);
 			usleep(50000U); //50ms
 			gpio_err|=gpio_set(nRST, 1);
