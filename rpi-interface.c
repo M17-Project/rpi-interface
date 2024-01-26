@@ -95,7 +95,7 @@ enum rx_state_t rx_state=RX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
 struct LSF lsf; 							//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
-uint16_t fn, last_fn=0;						//current and last received FN
+uint16_t fn, last_fn=0xFFFFU;				//current and last received FN
 uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
 uint8_t first_frame=1;						//first decoded frame after SYNC?
 uint8_t lich_parts=0;						//LICH chunks received (bit flags)
@@ -709,7 +709,7 @@ int main(int argc, char* argv[])
 			symbols[15]=f_flt_buff[15*5];
 
 			float dist_lsf=eucl_norm(&symbols[0], lsf_sync_ext, 16); //check against extended LSF syncword (8 symbols, alternating -3/+3)
-			float dist_str_a=eucl_norm(&symbols[8], str_sync_symbols, 8); //TODO: instead of checking 1 SW, try looking for 2
+			float dist_str_a=eucl_norm(&symbols[8], str_sync_symbols, 8);
 			for(uint8_t i=0; i<15; i++)
 				symbols[i]=f_flt_buff[960+i*5];
 			symbols[15]=f_flt_buff[960+15*5];
@@ -808,7 +808,7 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_RED, " CRC ERR\n");
 				}
 			}
-			else if(dist_str<=5.0f)// && rx_state==RX_SYNCD)
+			else if(dist_str<=5.0f)
 			{
 				rx_state=RX_SYNCD;
 				sample_cnt=0;		//reset rx timeout timer
@@ -855,32 +855,36 @@ int main(int argc, char* argv[])
 					lich_parts|=(1<<lich_cnt);
 					if(lich_parts==0x3FU && got_lsf==0) //collected all of them?
 					{
-						got_lsf=1;
-						m17stream.sid=rand()%0x10000U;
-
-						uint8_t call_dst[10]={0}, call_src[10]={0};
-						//uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
-
-						//swap order
-						/*for(uint8_t i=0; i<3; i++)
+						if(!CRC_M17(lsf_b, 30)) //CRC check
 						{
-							uint8_t tmp;
-							tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
-							tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
-						}*/
+							got_lsf=1;
+							m17stream.sid=rand()%0x10000U;
 
-						decode_callsign_bytes(call_dst, &lsf_b[0]);
-						decode_callsign_bytes(call_src, &lsf_b[6]);
+							uint8_t call_dst[12]={0}, call_src[12]={0};
+							uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
 
-						time(&rawtime);
-    					timeinfo=localtime(&rawtime);
-						dbg_print(0, "[%02d:%02d:%02d] ",
-							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-						//dbg_print(TERM_YELLOW, "LSF REC:  DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
-							//call_dst, call_src, can, 0.0f);
-						for(uint8_t i=0; i<(48+48+16+112+16)/8; i++)
-							dbg_print(TERM_YELLOW, "%02X", lsf_b[i]);
-						dbg_print(TERM_YELLOW, "\n");
+							//swap order
+							for(uint8_t i=0; i<3; i++)
+							{
+								uint8_t tmp;
+								tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
+								tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
+							}
+
+							decode_callsign_bytes(call_dst, &lsf_b[0]);
+							decode_callsign_bytes(call_src, &lsf_b[6]);
+
+							time(&rawtime);
+							timeinfo=localtime(&rawtime);
+							dbg_print(0, "[%02d:%02d:%02d] ",
+								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+							dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
+								call_dst, call_src, can);
+						}
+						else
+						{
+							lich_parts=0; //reset flags
+						}
 					}
 				}
 
