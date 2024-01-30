@@ -51,6 +51,7 @@ uint8_t tx_buff[512]={0};
 uint8_t rx_buff[65536]={0};
 int tx_len=0, rx_len=0;
 int socket_byte_count=0; //data available for reading at the socket
+char refl_addr[20]={0}; //reflector's IP address
 
 //config stuff
 struct config_t
@@ -565,47 +566,62 @@ void dev_stop_rx(void)
 
 int main(int argc, char* argv[])
 {
-	if(argc==2)
-	{
-		if(strstr(argv[1], (char*)"-r")) //device reset
-		{
-			uint8_t gpio_err=0;
-			gpio_init();
-			gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
-			gpio_err|=gpio_set(config.nrst, 0);
-			usleep(50000U); //50ms
-			gpio_err|=gpio_set(config.nrst, 1);
-			dbg_print(0, "Device reset");
-			if(gpio_err)
-				dbg_print(TERM_RED, " error\n");
-			else
-				dbg_print(TERM_GREEN, " OK\n");
-			return (int)gpio_err;
-		}
-	}
-
-	if(argc!=3)
+	if(argc<2)
 	{
 		dbg_print(TERM_RED, "Invalid params\nExiting\n");
 		return 1;
 	}
 
-	srand(time(NULL));
-	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
-
-	//-----------------------------------config read-----------------------------------
-	dbg_print(0, "Reading config file...");
-	if(load_config(&config, argv[2])==0)
+	//-----------------------------------args parse------------------------------------
+	uint8_t reset=0;
+	for(uint8_t i=1; i<argc; i++)
 	{
-		dbg_print(TERM_GREEN, " OK\n");
-	}
-	else
-	{
-		dbg_print(TERM_RED, " error reading %s\nExiting\n", argv[2]);
-		return 1;
+		if(argv[i][0]=='-')
+		{
+			if(strstr(argv[i], (char*)"r")!=NULL) //device reset
+			{
+				reset=1; //reset pending
+			}
+			else if(strstr(argv[i], (char*)"i")!=NULL) //reflector's address
+			{
+				memcpy(refl_addr, argv[i+1], strlen(argv[i+1]));
+				i++;
+			}
+			else if(strstr(argv[i], (char*)"c")!=NULL) //config file
+			{
+				dbg_print(0, "Config:");
+				if(load_config(&config, argv[i+1])==0)
+				{
+					dbg_print(TERM_GREEN, " OK\n");
+					i++; //skip next arg
+				}
+				else
+				{
+					dbg_print(TERM_RED, " error reading %s\nExiting\n", argv[i+1]);
+					return 1;
+				}
+			}
+		}
 	}
 
-	//basic sanity checks
+	if(reset)
+	{
+		uint8_t gpio_err=0;
+		gpio_init();
+		gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
+		gpio_err|=gpio_set(config.nrst, 0);
+		usleep(50000U); //50ms
+		gpio_err|=gpio_set(config.nrst, 1);
+		dbg_print(0, "Device reset");
+		if(gpio_err)
+			dbg_print(TERM_RED, " error\n");
+		else
+			dbg_print(TERM_GREEN, " OK\n");
+		
+		return (int)gpio_err;
+	}
+
+	//---------------------------config's basic sanity checks--------------------------
 	if(config.rx_freq<420000000U || config.rx_freq>450000000U)
 	{
 		dbg_print(TERM_RED, "Invalid RX frequency\nExiting\n");
@@ -621,6 +637,9 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_RED, "Invalid TX power\nExiting\n");
 		return 1;
 	}
+
+	srand(time(NULL));
+	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
 
 	//check write access to the log file
 	FILE* logfile=fopen((char*)config.log_path, "awb");
@@ -692,11 +711,11 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_YELLOW, "disabled\n");
 
 	//-----------------------------------internet part-----------------------------------
-	dbg_print(0, "Connecting to %s", argv[1]);
+	dbg_print(0, "Connecting to %s", refl_addr);
 
 	//server
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_addr.s_addr = inet_addr(argv[1]);
+	serv_addr.sin_addr.s_addr = inet_addr(refl_addr);
 	serv_addr.sin_port = htons(PORT);
 
 	//Create a socket
