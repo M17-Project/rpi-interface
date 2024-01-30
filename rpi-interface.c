@@ -1047,9 +1047,9 @@ int main(int argc, char* argv[])
 				static uint8_t dst_call[10]={0};
 				static uint8_t src_call[10]={0};
 
-				if(m17stream.fn==0) //update LSF at FN=0
+				if(m17stream.fn==0U) //update LSF at FN=0
 				{
-					//exytract data with correct endianness
+					//extract data with correct endianness
 					for(uint8_t i=0; i<6; i++)
 						m17stream.lsf.dst[i]=rx_buff[6+5-i];
 					for(uint8_t i=0; i<6; i++)
@@ -1108,6 +1108,9 @@ int main(int argc, char* argv[])
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(200000U); //wait 200ms (5 M17 frames)
 					gpio_set(PA_EN, 0);
+					//back to RX
+					dev_start_rx();
+					dbg_print(0, "RX start\n");
 				}
 
 				memset((uint8_t*)rx_buff, 0, rx_len);
