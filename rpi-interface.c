@@ -36,10 +36,6 @@
 #define PORT					17000
 #define MAX_UDP_LEN				65535
 
-#define nRST					17
-#define PA_EN					18
-#define BOOT0					27
-
 #define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`, 2097152=2^21
 
 //internet
@@ -70,6 +66,10 @@ struct config_t
 	uint32_t rx_freq;
 	uint32_t tx_freq;
 	uint8_t afc;
+	//GPIO
+	uint8_t pa_en;
+	uint8_t boot0;
+	uint8_t nrst;
 } config;
 
 //device stuff
@@ -259,7 +259,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 
 	//load defaults
 	sprintf((char*)cfg->log_path, "/var/www/html/files/log.txt");
-	sprintf((char*)cfg->uart, "/dev/ttyS0");
+	sprintf((char*)cfg->uart, "/dev/ttyAMA0");
 	cfg->uart_rate=460800;
 	sprintf((char*)cfg->node, "N0CALL H");
 	cfg->module='A';
@@ -268,6 +268,9 @@ int8_t load_config(struct config_t *cfg, char *path)
 	cfg->freq_corr=0;
 	cfg->tx_pwr=37.0f;
 	cfg->afc=0;
+	cfg->nrst=17;
+	cfg->pa_en=18;
+	cfg->boot0=27;
 
 	//overwrite settings
 	if(cfg_fp!=NULL)
@@ -321,6 +324,18 @@ int8_t load_config(struct config_t *cfg, char *path)
 				else
 					cfg->afc=0;
 			}
+			else if(strstr(line, "nrst")!=NULL)
+			{
+				cfg->nrst=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "pa_en")!=NULL)
+			{
+				cfg->pa_en=atoi(&line[strstr(line, "=")-line+1]);
+			}
+			else if(strstr(line, "boot0")!=NULL)
+			{
+				cfg->boot0=atoi(&line[strstr(line, "=")-line+1]);
+			}
 		}
 
 		fclose(cfg_fp);
@@ -332,52 +347,57 @@ int8_t load_config(struct config_t *cfg, char *path)
 	}
 }
 
-//GPIO - library-less, guerrilla style - we assume that only GPIO17, 18 and 27 will be used
+//GPIO - library-less, guerrilla style - we assume that only 3 GPIOs will be used
 void gpio_init(void)
 {
 	FILE* fp;
+	char tmp[256];
 	
-	//enable GPIO17, 18 and 27
+	//enable
 	fp=fopen("/sys/class/gpio/export", "wb");
 	if(fp!=NULL)
 	{
-		fwrite("17", 2, 1, fp);
+		sprintf(tmp, "%d", config.pa_en);
+		fwrite(tmp, 2, 1, fp);
 		fclose(fp);
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO17\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize PA_EN (GPIO%d)\nExiting\n", config.pa_en);
 		exit(1);
 	}
 
 	fp=fopen("/sys/class/gpio/export", "wb");
 	if(fp!=NULL)
 	{
-		fwrite("18", 2, 1, fp);
+		sprintf(tmp, "%d", config.boot0);
+		fwrite(tmp, 2, 1, fp);
 		fclose(fp);
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO18\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize BOOT0 (GPIO%d)\nExiting\n", config.boot0);
 		exit(1);
 	}
-
+	
 	fp=fopen("/sys/class/gpio/export", "wb");
 	if(fp!=NULL)
 	{
-		fwrite("27", 2, 1, fp);
+		sprintf(tmp, "%d", config.nrst);
+		fwrite(tmp, 2, 1, fp);
 		fclose(fp);
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO27\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize nRST (GPIO%d)\nExiting\n", config.nrst);
 		exit(1);
 	}
 
 	usleep(250000U); //give it 250ms
 
 	//set as output, default value is logic low
-	fp=fopen("/sys/class/gpio/gpio17/direction", "wb");
+	sprintf(tmp, "/sys/class/gpio/gpio%d/direction", config.pa_en);
+	fp=fopen(tmp, "wb");
 	if(fp!=NULL)
 	{
 		fwrite("out", 3, 1, fp);
@@ -385,11 +405,12 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO17\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize PA_EN (GPIO%d)\nExiting\n");
 		exit(1);
 	}
 
-	fp=fopen("/sys/class/gpio/gpio18/direction", "wb");
+	sprintf(tmp, "/sys/class/gpio/gpio%d/direction", config.boot0);
+	fp=fopen(tmp, "wb");
 	if(fp!=NULL)
 	{
 		fwrite("out", 3, 1, fp);
@@ -397,11 +418,12 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO18\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize BOOT0 (GPIO%d)\nExiting\n");
 		exit(1);
 	}
 
-	fp=fopen("/sys/class/gpio/gpio27/direction", "wb");
+	sprintf(tmp, "/sys/class/gpio/gpio%d/direction", config.nrst);
+	fp=fopen(tmp, "wb");
 	if(fp!=NULL)
 	{
 		fwrite("out", 3, 1, fp);
@@ -409,7 +431,7 @@ void gpio_init(void)
 	}
 	else
 	{
-		dbg_print(TERM_RED, " can not initialize GPIO27\nExiting\n");
+		dbg_print(TERM_RED, " can not initialize nRST (GPIO%d)\nExiting\n");
 		exit(1);
 	}
 }
@@ -417,25 +439,10 @@ void gpio_init(void)
 uint8_t gpio_set(uint8_t gpio, uint8_t state)
 {
 	FILE* fp=NULL;
+	char tmp[256];
 
-	switch(gpio)
-	{
-		case 17:
-			fp=fopen("/sys/class/gpio/gpio17/value", "wb");
-		break;
-
-		case 18:
-			fp=fopen("/sys/class/gpio/gpio18/value", "wb");
-		break;
-
-		case 27:
-			fp=fopen("/sys/class/gpio/gpio27/value", "wb");
-		break;
-
-		default:
-			;
-		break;
-	}
+	sprintf(tmp, "/sys/class/gpio/gpio%d/value", gpio);
+	fp=fopen(tmp, "wb");
 
 	if(fp!=NULL)
 	{
@@ -564,11 +571,10 @@ int main(int argc, char* argv[])
 		{
 			uint8_t gpio_err=0;
 			gpio_init();
-			gpio_err|=gpio_set(BOOT0, 0); //all pins should be at logic low already, but better be safe than sorry
-			gpio_err|=gpio_set(nRST, 0);
-			gpio_err|=gpio_set(PA_EN, 0);
+			gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
+			gpio_err|=gpio_set(config.nrst, 0);
 			usleep(50000U); //50ms
-			gpio_err|=gpio_set(nRST, 1);
+			gpio_err|=gpio_set(config.nrst, 1);
 			dbg_print(0, "Device reset");
 			if(gpio_err)
 				dbg_print(TERM_RED, " error\n");
@@ -633,10 +639,9 @@ int main(int argc, char* argv[])
 	dbg_print(0, "GPIO init...");
 	uint8_t gpio_err=0;
 	gpio_init();
-	gpio_err|=gpio_set(nRST, 0); //both pins should be at logic low already, but better be safe than sorry
-	gpio_err|=gpio_set(PA_EN, 0);
+	gpio_err|=gpio_set(config.nrst, 0); //both pins should be at logic low already, but better be safe than sorry
 	usleep(50000U); //50ms
-	gpio_err|=gpio_set(nRST, 1);
+	gpio_err|=gpio_set(config.nrst, 1);
 	usleep(1000000U); //1s for RRU boot-up
 	if(gpio_err==0)
 		dbg_print(TERM_GREEN, " OK\n");
@@ -1066,7 +1071,7 @@ int main(int argc, char* argv[])
 					decode_callsign_bytes(src_call, m17stream.lsf.src);
 
 					//set PA_EN=1 and initialize TX
-					//gpio_set(PA_EN, 1);
+					//gpio_set(config.pa_en, 1);
 					dev_start_tx();
 				}
 				
@@ -1107,8 +1112,8 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(200000U); //wait 200ms (5 M17 frames)
-					gpio_set(PA_EN, 0);
 					//back to RX
+					gpio_set(config.pa_en, 0);
 					dev_start_rx();
 					dbg_print(0, "RX start\n");
 				}
