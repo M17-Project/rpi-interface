@@ -360,7 +360,7 @@ void gpio_init(void)
 	if(fp!=NULL)
 	{
 		sprintf(tmp, "%d", config.pa_en);
-		fwrite(tmp, 2, 1, fp);
+		fwrite(tmp, strlen(tmp), 1, fp);
 		fclose(fp);
 	}
 	else
@@ -373,7 +373,7 @@ void gpio_init(void)
 	if(fp!=NULL)
 	{
 		sprintf(tmp, "%d", config.boot0);
-		fwrite(tmp, 2, 1, fp);
+		fwrite(tmp, strlen(tmp), 1, fp);
 		fclose(fp);
 	}
 	else
@@ -386,7 +386,7 @@ void gpio_init(void)
 	if(fp!=NULL)
 	{
 		sprintf(tmp, "%d", config.nrst);
-		fwrite(tmp, 2, 1, fp);
+		fwrite(tmp, strlen(tmp), 1, fp);
 		fclose(fp);
 	}
 	else
