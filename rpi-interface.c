@@ -1086,6 +1086,7 @@ int main(int argc, char* argv[])
 				m17stream.fn=((uint16_t)rx_buff[34]<<8)|rx_buff[35];
 				static uint8_t dst_call[10]={0};
 				static uint8_t src_call[10]={0};
+				memcpy(m17stream.pld, &rx_buff[(32+16+224+16)/8U], 128/8);
 
 				if(m17stream.fn==0U) //update LSF at FN=0
 				{
@@ -1102,6 +1103,10 @@ int main(int argc, char* argv[])
 					for(uint8_t i=0; i<14; i++)
 						m17stream.lsf.meta[i]=rx_buff[20+i];
 
+					uint16_t ccrc=LSF_CRC(&(m17stream.lsf));
+            		m17stream.lsf.crc[0]=ccrc>>8;
+            		m17stream.lsf.crc[1]=ccrc&0xFF;
+
 					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
 					decode_callsign_bytes(src_call, m17stream.lsf.src);
 
@@ -1110,9 +1115,63 @@ int main(int argc, char* argv[])
 					dev_start_tx();
 				}
 				
+				//generate frame symbols, filter them and send out to the device
+				float frame_symbols[SYM_PER_FRA];
+				uint32_t frame_buff_cnt;
 				int8_t samples[960];
-				memset(samples, 0, 960);
-				write(fd, (uint8_t*)samples, 960);
+				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
+				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
+				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
+				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
+				if(m17stream.fn==0U)
+				{
+					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
+					//let's start with the preamble
+					frame_buff_cnt=0;
+					send_preamble(frame_symbols, &frame_buff_cnt, 0); //0 - LSF preamble
+					//filter and send out to the device
+					memset(samples, 0, 960);
+					write(fd, (uint8_t*)samples, 960);
+
+					//now the LSF
+					frame_buff_cnt=0;
+					send_syncword(&frame_symbols[0], &frame_buff_cnt, SYNC_LSF);
+					conv_encode_LSF(enc_bits, &(m17stream.lsf));
+					reorder_bits(rf_bits, enc_bits);
+					randomize_bits(rf_bits);
+					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					; //RRC filter
+					write(fd, (uint8_t*)samples, 960);
+
+					//finally, frame 0
+					frame_buff_cnt=0;
+					send_syncword(&frame_symbols[0], &frame_buff_cnt, SYNC_STR);
+					extract_LICH(lich, 0, &(m17stream.lsf)); //m17stream.fn % 6 = 0
+					encode_LICH(lich_encoded, lich);
+					unpack_LICH(enc_bits, lich_encoded);
+					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, 0); //m17stream.fn = 0
+					reorder_bits(rf_bits, enc_bits);
+            		randomize_bits(rf_bits);
+					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					; //RRC filter
+					write(fd, (uint8_t*)samples, 960);
+				}
+				else
+				{
+					//only one frame is needed
+					frame_buff_cnt=0;
+					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
+					extract_LICH(lich, m17stream.fn%6, &(m17stream.lsf)); //m17stream.fn % 6 - LICH_CNT
+					encode_LICH(lich_encoded, lich);
+					unpack_LICH(enc_bits, lich_encoded);
+					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
+					reorder_bits(rf_bits, enc_bits);
+            		randomize_bits(rf_bits);
+					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					; //RRC filter
+					memset(samples, 0, 960);
+					write(fd, (uint8_t*)samples, 960);
+				}
 
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
@@ -1141,6 +1200,27 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn&0x8000U)
 				{
+					//two frames need to be sent - last stream frame and EOT marker
+					//last frame
+					frame_buff_cnt=0;
+					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
+					extract_LICH(lich, (m17stream.fn&0x7FFFU)%6, &(m17stream.lsf)); //(m17stream.fn&0x7FFF) % 6 - LICH_CNT
+					encode_LICH(lich_encoded, lich);
+					unpack_LICH(enc_bits, lich_encoded);
+					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
+					reorder_bits(rf_bits, enc_bits);
+            		randomize_bits(rf_bits);
+					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					; //RRC filter
+					memset(samples, 0, 960);
+					write(fd, (uint8_t*)samples, 960);
+
+					//now the final EOT marker
+					frame_buff_cnt=0;
+					send_eot(frame_symbols, &frame_buff_cnt);
+					; //RRC filter
+					write(fd, (uint8_t*)samples, 960);
+
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
 
