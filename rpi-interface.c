@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <time.h>
+#include <signal.h>
 
 //rpi-interface commands
 #include "interface_cmds.h"
@@ -564,9 +565,23 @@ void dev_stop_rx(void)
 	write(fd, cmd, cmd[1]);
 }
 
+void sigint_handler(int val)
+{
+	if(val){}; //get rid of unused variable warning
+	dbg_print(TERM_YELLOW, "\nSIGINT caught, disconnecting\n");
+	sprintf((char*)tx_buff, "DISC123456"); //that "123456" is just a placeholder
+	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
+		tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
+	refl_send(tx_buff, 4+6); //DISC
+	dbg_print(TERM_YELLOW, "Exiting\n");
+	exit(0);
+}
+
 int main(int argc, char* argv[])
 {
-	if(argc<2)
+	signal(SIGINT, sigint_handler);
+
+	if(argc<3)
 	{
 		dbg_print(TERM_RED, "Invalid params\nExiting\n");
 		return 1;
@@ -691,6 +706,7 @@ int main(int argc, char* argv[])
 	read(fd, ping_test, 6);
 
 	uint32_t dev_err=((uint32_t)ping_test[5]<<24)|((uint32_t)ping_test[4]<<16)|((uint32_t)ping_test[3]<<8)|ping_test[2];
+	//uint32_t dev_err=*((uint32_t*)&ping_test[2]);
 	if(ping_test[0]==0 && ping_test[1]==6 && dev_err==0)
 		dbg_print(TERM_GREEN, " PONG OK\n");
 	else
