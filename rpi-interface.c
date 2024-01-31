@@ -705,8 +705,7 @@ int main(int argc, char* argv[])
 	uint8_t ping_test[6]={0};
 	read(fd, ping_test, 6);
 
-	uint32_t dev_err=((uint32_t)ping_test[5]<<24)|((uint32_t)ping_test[4]<<16)|((uint32_t)ping_test[3]<<8)|ping_test[2];
-	//uint32_t dev_err=*((uint32_t*)&ping_test[2]);
+	uint32_t dev_err=*((uint32_t*)&ping_test[2]);
 	if(ping_test[0]==0 && ping_test[1]==6 && dev_err==0)
 		dbg_print(TERM_GREEN, " PONG OK\n");
 	else
