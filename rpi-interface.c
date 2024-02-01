@@ -1132,13 +1132,14 @@ int main(int argc, char* argv[])
 				}
 				
 				//generate frame symbols, filter them and send out to the device
-				float frame_symbols[SYM_PER_FRA];
-				uint32_t frame_buff_cnt;
-				int8_t samples[960];
+				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
+				uint32_t frame_buff_cnt;			//buffer counter
+				int8_t samples[SYM_PER_PLD*2*5];	//bits*2=symbols. symbols*5=samples
 				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
 				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
 				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
 				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
+				float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*2*5]; //lookback samples plus a whole frame
 				if(m17stream.fn==0U)
 				{
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
@@ -1146,8 +1147,26 @@ int main(int argc, char* argv[])
 					frame_buff_cnt=0;
 					send_preamble(frame_symbols, &frame_buff_cnt, 0); //0 - LSF preamble
 					//filter and send out to the device
-					//rrc_taps_5; //RRC filter
-					memset(samples, 0, 960);
+					memset((uint32_t*)&flt_buff[0], 0, sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 
 					//now the LSF
@@ -1157,7 +1176,27 @@ int main(int argc, char* argv[])
 					reorder_bits(rf_bits, enc_bits);
 					randomize_bits(rf_bits);
 					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
-					; //RRC filter
+					//filter and send out to the device
+					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 
 					//finally, frame 0
@@ -1170,7 +1209,27 @@ int main(int argc, char* argv[])
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
 					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
-					; //RRC filter
+					//filter and send out to the device
+					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 				}
 				else
@@ -1185,14 +1244,27 @@ int main(int argc, char* argv[])
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
 					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
-					; //RRC filter
-					/*if(m17stream.fn%60<20)
-						memset(samples, floorf(-3.0f*TX_SYMBOL_SCALING_COEFF), 960); //deviation check
-					else if(m17stream.fn%60<40)*/
-						memset(samples, 0, 960); //deviation check
-					/*else
-						memset(samples, floorf(+3.0f*TX_SYMBOL_SCALING_COEFF), 960); //deviation check
-					*/
+					//filter and send out to the device
+					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 				}
 
