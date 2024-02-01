@@ -1158,14 +1158,14 @@ int main(int argc, char* argv[])
 								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
 						}
 					}
-					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					for(uint16_t i=0; i<sizeof(samples); i++)
 					{
 						float acc=0.0f;
 						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
 						{
 							acc+=flt_buff[i+j]*rrc_taps_5[j];
 						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
 					write(fd, (uint8_t*)samples, 960);
 
@@ -1188,14 +1188,14 @@ int main(int argc, char* argv[])
 								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
 						}
 					}
-					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					for(uint16_t i=0; i<sizeof(samples); i++)
 					{
 						float acc=0.0f;
 						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
 						{
 							acc+=flt_buff[i+j]*rrc_taps_5[j];
 						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
 					write(fd, (uint8_t*)samples, 960);
 
@@ -1221,14 +1221,14 @@ int main(int argc, char* argv[])
 								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
 						}
 					}
-					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					for(uint16_t i=0; i<sizeof(samples); i++)
 					{
 						float acc=0.0f;
 						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
 						{
 							acc+=flt_buff[i+j]*rrc_taps_5[j];
 						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF; //crank up the gain
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
 					write(fd, (uint8_t*)samples, 960);
 				}
@@ -1256,7 +1256,7 @@ int main(int argc, char* argv[])
 								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
 						}
 					}
-					for(uint16_t i=0; i<sizeof(samples)/sizeof(float); i++)
+					for(uint16_t i=0; i<sizeof(samples); i++)
 					{
 						float acc=0.0f;
 						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
@@ -1306,14 +1306,53 @@ int main(int argc, char* argv[])
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
 					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
-					; //RRC filter
-					memset(samples, 0, 960);
+					//filter and send out to the device
+					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 
 					//now the final EOT marker
 					frame_buff_cnt=0;
 					send_eot(frame_symbols, &frame_buff_cnt);
-					; //RRC filter
+					//filter and send out to the device
+					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					for(uint16_t i=0; i<SYM_PER_FRA; i++)
+					{
+						for(uint8_t j=0; j<5; j++) //upsample
+						{
+							if(j==0)
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
+							else
+								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
+						}
+					}
+					for(uint16_t i=0; i<sizeof(samples); i++)
+					{
+						float acc=0.0f;
+						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
+						{
+							acc+=flt_buff[i+j]*rrc_taps_5[j];
+						}
+						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
+					}
 					write(fd, (uint8_t*)samples, 960);
 
 					time(&rawtime);
