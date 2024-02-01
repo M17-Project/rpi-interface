@@ -1134,12 +1134,12 @@ int main(int argc, char* argv[])
 				//generate frame symbols, filter them and send out to the device
 				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
 				uint32_t frame_buff_cnt;			//buffer counter
-				int8_t samples[SYM_PER_PLD*2*5];	//bits*2=symbols. symbols*5=samples
+				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*5
 				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
 				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
 				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
 				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
-				float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*2*5]; //lookback samples plus a whole frame
+				float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
 				if(m17stream.fn==0U)
 				{
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
@@ -1167,7 +1167,10 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					FILE *dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
+					fwrite(samples, sizeof(samples), 1, dbgdump);
+					fclose(dbgdump);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//now the LSF
 					frame_buff_cnt=0;
@@ -1197,7 +1200,10 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
+					fwrite(samples, sizeof(samples), 1, dbgdump);
+					fclose(dbgdump);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//finally, frame 0
 					frame_buff_cnt=0;
@@ -1230,7 +1236,10 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
+					fwrite(samples, sizeof(samples), 1, dbgdump);
+					fclose(dbgdump);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 				}
 				else
 				{
@@ -1265,7 +1274,10 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					FILE *dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
+					fwrite(samples, sizeof(samples), 1, dbgdump);
+					fclose(dbgdump);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 				}
 
 				time(&rawtime);
@@ -1327,7 +1339,7 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//now the final EOT marker
 					frame_buff_cnt=0;
