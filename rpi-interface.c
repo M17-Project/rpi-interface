@@ -37,7 +37,16 @@
 #define PORT					17000
 #define MAX_UDP_LEN				65535
 
-#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0xAD)*129.0f) //CC1200 User's Guide, p. 24, 0xAD is `DEVIATION_M`, 2097152=2^21
+#define RX_SYMBOL_SCALING_COEFF	(1.0f/(0.8f/(40.0e3f/2097152*0xAD)*129.0f))	//CC1200 User's Guide, p. 24
+																			//0xAD is `DEVIATION_M`, 2097152=2^21
+																			//+1.0 is the symbol for +0.8kHz
+																			//40.0e3 is F_TCXO in kHz
+																			//129 is `CFM_RX_DATA_OUT` register value at max. F_DEV
+																			//datasheet might have this wrong (it says 64)
+#define TX_SYMBOL_SCALING_COEFF	(0.8f/((40.0e3f/2097152)*0xAD)*64.0f)		//0xAD is `DEVIATION_M`, 2097152=2^21
+																			//+0.8kHz is the deviation for symbol +1
+																			//40.0e3 is F_TCXO in kHz
+																			//64 is `CFM_TX_DATA_IN` register value for max. F_DEV
 
 //internet
 struct sockaddr_in source, dest; 
@@ -791,7 +800,7 @@ int main(int argc, char* argv[])
 			f_sample=0.0f;
 			for(uint8_t i=0; i<sizeof(flt_buff); i++)
 				f_sample+=rrc_taps_5[i]*(float)flt_buff[i];
-			f_sample*=SYMBOL_SCALING_COEFF; //map +104 to +3 (works for CC1200 only)
+			f_sample*=RX_SYMBOL_SCALING_COEFF; //symbol map (works for CC1200 only)
 
 			for(uint16_t i=0; i<sizeof(f_flt_buff)/sizeof(float)-1; i++)
 				f_flt_buff[i]=f_flt_buff[i+1];
@@ -1093,6 +1102,10 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn==0U) //update LSF at FN=0
 				{
+					dev_stop_rx();
+					dbg_print(0, "RX stop\n");
+					usleep(10*1000U);
+
 					//extract data with correct endianness
 					for(uint8_t i=0; i<6; i++)
 						m17stream.lsf.dst[i]=rx_buff[6+5-i];
@@ -1133,6 +1146,7 @@ int main(int argc, char* argv[])
 					frame_buff_cnt=0;
 					send_preamble(frame_symbols, &frame_buff_cnt, 0); //0 - LSF preamble
 					//filter and send out to the device
+					//rrc_taps_5; //RRC filter
 					memset(samples, 0, 960);
 					write(fd, (uint8_t*)samples, 960);
 
@@ -1172,7 +1186,13 @@ int main(int argc, char* argv[])
             		randomize_bits(rf_bits);
 					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
 					; //RRC filter
-					memset(samples, 0, 960);
+					/*if(m17stream.fn%60<20)
+						memset(samples, floorf(-3.0f*TX_SYMBOL_SCALING_COEFF), 960); //deviation check
+					else if(m17stream.fn%60<40)*/
+						memset(samples, 0, 960); //deviation check
+					/*else
+						memset(samples, floorf(+3.0f*TX_SYMBOL_SCALING_COEFF), 960); //deviation check
+					*/
 					write(fd, (uint8_t*)samples, 960);
 				}
 
@@ -1201,7 +1221,7 @@ int main(int argc, char* argv[])
 					}
 				}
 
-				if(m17stream.fn&0x8000U)
+				if(m17stream.fn&0x8000U) //last stream frame
 				{
 					//two frames need to be sent - last stream frame and EOT marker
 					//last frame
