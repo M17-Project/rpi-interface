@@ -37,7 +37,7 @@
 #define PORT					17000
 #define MAX_UDP_LEN				65535
 
-#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0x9F)*129.0f) //CC1200 User's Guide, p. 24, 0x9F is `DEVIATION_M`, 2097152=2^21
+#define SYMBOL_SCALING_COEFF	3.0f/(2.4f/(40.0e3f/2097152*0xAD)*129.0f) //CC1200 User's Guide, p. 24, 0xAD is `DEVIATION_M`, 2097152=2^21
 
 //internet
 struct sockaddr_in source, dest; 
@@ -1229,7 +1229,7 @@ int main(int argc, char* argv[])
 
 					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-					usleep(200000U); //wait 200ms (5 M17 frames)
+					usleep(10*40000U); //wait 400ms (10 M17 frames)
 					//back to RX
 					gpio_set(config.pa_en, 0);
 					dev_start_rx();
