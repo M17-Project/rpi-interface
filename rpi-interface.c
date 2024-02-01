@@ -280,63 +280,67 @@ int8_t load_config(struct config_t *cfg, char *path)
 		//mindlessly load all the values, we will perform sanity checks later
 		while(fgets((char*)line, sizeof(line), cfg_fp)>(char*)0)
 		{
+			uint8_t len;
 			if(strstr(line, "log_path")!=NULL)
 			{
-				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
-				cfg->log_path[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
+				memcpy((char*)&(cfg->uart), strstr(line, "\"")+1, len);
+				cfg->log_path[len]=0;
 			}
 			else if(strstr(line, "device")!=NULL)
 			{
-				memcpy((char*)&(cfg->uart), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
-				cfg->uart[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
+				memcpy((char*)&(cfg->uart), strstr(line, "\"")+1, len);
+				cfg->uart[len]=0;
 			}
 			else if(strstr(line, "speed")!=NULL)
 			{
-				cfg->uart_rate=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->uart_rate=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "name")!=NULL)
 			{
-				memcpy((char*)&(cfg->node), &line[strstr(line, "\"")-line+1], strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]);
-				cfg->node[strstr(&line[strstr(line, "\"")-line+1], "\"")-&line[strstr(line, "\"")-line+1]]=0;
+				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
+				memcpy((char*)&(cfg->node), strstr(line, "\"")+1, len);
+				cfg->node[len]=0;
 			}
 			else if(strstr(line, "module")!=NULL)
 			{
-				cfg->module=line[strstr(line, "\"")-line+1];
+				cfg->module=*(strstr(line, "\"")+1);
 			}
 			else if(strstr(line, "tx_freq")!=NULL)
 			{
-				cfg->tx_freq=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->tx_freq=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "rx_freq")!=NULL)
 			{
-				cfg->rx_freq=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->rx_freq=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "freq_corr")!=NULL)
 			{
-				cfg->freq_corr=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->freq_corr=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "tx_pwr")!=NULL)
 			{
-				cfg->tx_pwr=atof(&line[strstr(line, "=")-line+1]);
+				cfg->tx_pwr=atof(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "afc")!=NULL)
 			{
-				if(line[strstr(line, "=")-line+1]=='1')
+				if(*(strstr(line, "=")+1)=='1')
 					cfg->afc=1;
 				else
 					cfg->afc=0;
 			}
 			else if(strstr(line, "nrst")!=NULL)
 			{
-				cfg->nrst=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->nrst=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "pa_en")!=NULL)
 			{
-				cfg->pa_en=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->pa_en=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "boot0")!=NULL)
 			{
-				cfg->boot0=atoi(&line[strstr(line, "=")-line+1]);
+				cfg->boot0=atoi(strstr(line, "=")+1);
 			}
 		}
 
@@ -593,16 +597,16 @@ int main(int argc, char* argv[])
 	{
 		if(argv[i][0]=='-')
 		{
-			if(strstr(argv[i], (char*)"r")!=NULL) //device reset
+			if(argv[i][1]=='r') //device reset
 			{
 				reset=1; //reset pending
 			}
-			else if(strstr(argv[i], (char*)"i")!=NULL) //reflector's address
+			else if(argv[i][1]=='i') //reflector's address
 			{
 				memcpy(refl_addr, argv[i+1], strlen(argv[i+1]));
 				i++;
 			}
-			else if(strstr(argv[i], (char*)"c")!=NULL) //config file
+			else if(argv[i][1]=='c') //config file
 			{
 				dbg_print(0, "Config:");
 				if(load_config(&config, argv[i+1])==0)
