@@ -893,8 +893,8 @@ int main(int argc, char* argv[])
 					if(*((uint16_t*)lsf.type)&1) //if stream
 					{
 						dbg_print(TERM_GREEN, " CRC OK ");
-						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | CAN: %02d | MER: %-3.1f%%\n",
-							call_dst, call_src, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
+							call_dst, call_src, *((uint16_t*)lsf.type), can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 
 						FILE* logfile=fopen((char*)config.log_path, "awb");
 						if(logfile!=NULL)
@@ -1040,7 +1040,7 @@ int main(int argc, char* argv[])
 
 					if(got_lsf)
 					{
-						m17stream.fn=fn;
+						m17stream.fn=(fn>>8)|((fn&0xFF)<<8);
 						uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
 						sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
 						*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
@@ -1100,31 +1100,56 @@ int main(int argc, char* argv[])
 				static uint8_t src_call[10]={0};
 				memcpy(m17stream.pld, &rx_buff[(32+16+224+16)/8U], 128/8);
 
-				if(m17stream.fn==0U) //update LSF at FN=0
+				if(m17stream.fn==0U) //update some parts of the LSF at FN=0
 				{
 					dev_stop_rx();
 					dbg_print(0, "RX stop\n");
 					usleep(10*1000U);
 
-					//extract data with correct endianness
-					for(uint8_t i=0; i<6; i++)
-						m17stream.lsf.dst[i]=rx_buff[6+5-i];
-					for(uint8_t i=0; i<6; i++)
-						m17stream.lsf.src[i]=rx_buff[12+5-i];
+					//extract data
+					memcpy((uint8_t*)(&m17stream.lsf.dst), &rx_buff[6], 6);
+					memcpy((uint8_t*)(&m17stream.lsf.src), &rx_buff[6+6], 6);
 
-					m17stream.lsf.type[1]=rx_buff[18];
-					m17stream.lsf.type[0]=rx_buff[19];
-
-					memset((uint8_t*)m17stream.lsf.meta, 0, 14);
-					for(uint8_t i=0; i<14; i++)
-						m17stream.lsf.meta[i]=rx_buff[20+i];
+					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
 
 					uint16_t ccrc=LSF_CRC(&(m17stream.lsf));
             		m17stream.lsf.crc[0]=ccrc>>8;
             		m17stream.lsf.crc[1]=ccrc&0xFF;
 
-					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
-					decode_callsign_bytes(src_call, m17stream.lsf.src);
+					//correct endianness
+					uint8_t tmp_dst[6], tmp_src[6];
+					for(uint8_t i=0; i<6; i++)
+						tmp_dst[i]=rx_buff[6+5-i];
+					for(uint8_t i=0; i<6; i++)
+						tmp_src[i]=rx_buff[12+5-i];
+
+					decode_callsign_bytes(dst_call, tmp_dst);
+					decode_callsign_bytes(src_call, tmp_src);
+
+					//generate META field TODO: fix this
+					//remove trailing spaces and suffixes
+					uint8_t trimmed_src[12];
+					for(uint8_t i=0; i<12; i++)
+					{
+						if(src_call[i]!=' ')
+							trimmed_src[i]=src_call[i];
+						else
+						{
+							trimmed_src[i]=0;
+							break;
+						}
+					}
+					encode_callsign_bytes(tmp_src, trimmed_src);
+					//uint64_t val=0x9B19F3CECAEDULL; //hardcoded "M17-M17 Z" for testing purposes
+					uint64_t val=0x002119CECAEDULL; //hardcoded "M17-M17"
+					/*for(uint8_t i=0; i<6; i++) //endianness fix
+					{
+						m17stream.lsf.meta[i]=tmp_src[5-i];
+						m17stream.lsf.meta[6+i]=*(((uint8_t*)&val)+(5-i));
+					}*/
+					memcpy(&m17stream.lsf.meta[2+0], tmp_src, 6);
+					memcpy(&m17stream.lsf.meta[2+6], (uint8_t*)&val, 6);
+					//memset(&m17stream.lsf.meta[12], 0, sizeof(m17stream.lsf.meta)-12);
 
 					//set PA_EN=1 and initialize TX
 					//gpio_set(config.pa_en, 1);
@@ -1134,12 +1159,12 @@ int main(int argc, char* argv[])
 				//generate frame symbols, filter them and send out to the device
 				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
 				uint32_t frame_buff_cnt;			//buffer counter
-				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*5
+				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*sps
 				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
 				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
 				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
 				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
-				float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
+				static float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
 				if(m17stream.fn==0U)
 				{
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
@@ -1147,7 +1172,7 @@ int main(int argc, char* argv[])
 					frame_buff_cnt=0;
 					send_preamble(frame_symbols, &frame_buff_cnt, 0); //0 - LSF preamble
 					//filter and send out to the device
-					memset((uint32_t*)&flt_buff[0], 0, sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memset((uint8_t*)&flt_buff[0], 0U, sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
@@ -1167,20 +1192,17 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					FILE *dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
-					fwrite(samples, sizeof(samples), 1, dbgdump);
-					fclose(dbgdump);
 					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//now the LSF
 					frame_buff_cnt=0;
-					send_syncword(&frame_symbols[0], &frame_buff_cnt, SYNC_LSF);
+					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_LSF);
 					conv_encode_LSF(enc_bits, &(m17stream.lsf));
 					reorder_bits(rf_bits, enc_bits);
 					randomize_bits(rf_bits);
-					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
 					//filter and send out to the device
-					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
@@ -1200,23 +1222,20 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
-					fwrite(samples, sizeof(samples), 1, dbgdump);
-					fclose(dbgdump);
 					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//finally, frame 0
 					frame_buff_cnt=0;
-					send_syncword(&frame_symbols[0], &frame_buff_cnt, SYNC_STR);
+					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
 					extract_LICH(lich, 0, &(m17stream.lsf)); //m17stream.fn % 6 = 0
 					encode_LICH(lich_encoded, lich);
 					unpack_LICH(enc_bits, lich_encoded);
 					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, 0); //m17stream.fn = 0
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
-					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
 					//filter and send out to the device
-					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
@@ -1236,9 +1255,6 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
-					fwrite(samples, sizeof(samples), 1, dbgdump);
-					fclose(dbgdump);
 					write(fd, (uint8_t*)samples, sizeof(samples));
 				}
 				else
@@ -1252,9 +1268,9 @@ int main(int argc, char* argv[])
 					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
-					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
 					//filter and send out to the device
-					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
@@ -1274,9 +1290,6 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					FILE *dbgdump=fopen("/home/sp5wwp/dump.bin", "awb");
-					fwrite(samples, sizeof(samples), 1, dbgdump);
-					fclose(dbgdump);
 					write(fd, (uint8_t*)samples, sizeof(samples));
 				}
 
@@ -1286,7 +1299,7 @@ int main(int argc, char* argv[])
 				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] NET FRM: ",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, "SID: %04X | FN: %04X | DST: %-9s | SRC: %-9s | TYPE: %04X | META: ",
-						m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, *((uint16_t*)m17stream.lsf.type));
+						m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, ((uint16_t)m17stream.lsf.type[0]<<8)|m17stream.lsf.type[1]);
 				for(uint8_t i=0; i<14; i++)
 					dbg_print(TERM_YELLOW, "%02X", m17stream.lsf.meta[i]);
 				dbg_print(TERM_YELLOW, "\n");
@@ -1317,9 +1330,9 @@ int main(int argc, char* argv[])
 					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
-					send_data(&frame_symbols[frame_buff_cnt], &frame_buff_cnt, rf_bits);
+					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
 					//filter and send out to the device
-					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
@@ -1345,7 +1358,7 @@ int main(int argc, char* argv[])
 					frame_buff_cnt=0;
 					send_eot(frame_symbols, &frame_buff_cnt);
 					//filter and send out to the device
-					memcpy(&flt_buff[0], &flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)/sizeof(float)-1); //lookback
+					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
 					{
 						for(uint8_t j=0; j<5; j++) //upsample
