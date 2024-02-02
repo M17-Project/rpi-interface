@@ -1128,7 +1128,7 @@ int main(int argc, char* argv[])
 
 					//generate META field TODO: fix this
 					//remove trailing spaces and suffixes
-					uint8_t trimmed_src[12];
+					/*uint8_t trimmed_src[12];
 					for(uint8_t i=0; i<12; i++)
 					{
 						if(src_call[i]!=' ')
@@ -1139,21 +1139,23 @@ int main(int argc, char* argv[])
 							break;
 						}
 					}
-					encode_callsign_bytes(tmp_src, trimmed_src);
+					encode_callsign_bytes(tmp_src, trimmed_src);*/
 					//uint64_t val=0x9B19F3CECAEDULL; //hardcoded "M17-M17 Z" for testing purposes
-					uint64_t val=0x002119CECAEDULL; //hardcoded "M17-M17"
+					//uint64_t val=0x002119CECAEDULL; //hardcoded "M17-M17"
 					/*for(uint8_t i=0; i<6; i++) //endianness fix
 					{
 						m17stream.lsf.meta[i]=tmp_src[5-i];
 						m17stream.lsf.meta[6+i]=*(((uint8_t*)&val)+(5-i));
 					}*/
-					memcpy(&m17stream.lsf.meta[2+0], tmp_src, 6);
-					memcpy(&m17stream.lsf.meta[2+6], (uint8_t*)&val, 6);
+					/*memcpy(&m17stream.lsf.meta[2+0], tmp_src, 6);
+					memcpy(&m17stream.lsf.meta[2+6], (uint8_t*)&val, 6);*/
 					//memset(&m17stream.lsf.meta[12], 0, sizeof(m17stream.lsf.meta)-12);
+					memset(m17stream.lsf.meta, 0, sizeof(m17stream.lsf.meta));
 
 					//set PA_EN=1 and initialize TX
 					//gpio_set(config.pa_en, 1);
 					dev_start_tx();
+					usleep(10*1000U);
 				}
 				
 				//generate frame symbols, filter them and send out to the device
@@ -1378,7 +1380,7 @@ int main(int argc, char* argv[])
 						}
 						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 					}
-					write(fd, (uint8_t*)samples, 960);
+					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
