@@ -1111,10 +1111,7 @@ int main(int argc, char* argv[])
 					memcpy((uint8_t*)(&m17stream.lsf.src), &rx_buff[6+6], 6);
 
 					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
-
-					uint16_t ccrc=LSF_CRC(&(m17stream.lsf));
-            		m17stream.lsf.crc[0]=ccrc>>8;
-            		m17stream.lsf.crc[1]=ccrc&0xFF;
+					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, subtype: extended callsign data
 
 					//correct endianness
 					uint8_t tmp_dst[6], tmp_src[6];
@@ -1128,7 +1125,7 @@ int main(int argc, char* argv[])
 
 					//generate META field TODO: fix this
 					//remove trailing spaces and suffixes
-					/*uint8_t trimmed_src[12];
+					uint8_t trimmed_src[12];
 					for(uint8_t i=0; i<12; i++)
 					{
 						if(src_call[i]!=' ')
@@ -1139,18 +1136,22 @@ int main(int argc, char* argv[])
 							break;
 						}
 					}
-					encode_callsign_bytes(tmp_src, trimmed_src);*/
-					//uint64_t val=0x9B19F3CECAEDULL; //hardcoded "M17-M17 Z" for testing purposes
-					//uint64_t val=0x002119CECAEDULL; //hardcoded "M17-M17"
-					/*for(uint8_t i=0; i<6; i++) //endianness fix
+					encode_callsign_bytes(tmp_src, trimmed_src);
+					uint64_t val;
+					uint8_t ext_ref[12];
+					sprintf((char*)ext_ref, "M17-M17 %c", config.module); //hardcoded for now
+					encode_callsign_value(&val, ext_ref);
+					for(uint8_t i=0; i<6; i++) //endianness fix
 					{
 						m17stream.lsf.meta[i]=tmp_src[5-i];
 						m17stream.lsf.meta[6+i]=*(((uint8_t*)&val)+(5-i));
-					}*/
-					/*memcpy(&m17stream.lsf.meta[2+0], tmp_src, 6);
-					memcpy(&m17stream.lsf.meta[2+6], (uint8_t*)&val, 6);*/
-					//memset(&m17stream.lsf.meta[12], 0, sizeof(m17stream.lsf.meta)-12);
-					memset(m17stream.lsf.meta, 0, sizeof(m17stream.lsf.meta));
+					}
+					memset(&m17stream.lsf.meta[12], 0, 2);
+
+					//append CRC
+					uint16_t ccrc=LSF_CRC(&m17stream.lsf);
+            		m17stream.lsf.crc[0]=ccrc>>8;
+            		m17stream.lsf.crc[1]=ccrc&0xFF;
 
 					//set PA_EN=1 and initialize TX
 					//gpio_set(config.pa_en, 1);
