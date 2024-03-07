@@ -26,13 +26,15 @@
 #include <time.h>
 #include <signal.h>
 
+#include <zmq.h>
+
 //rpi-interface commands
 #include "interface_cmds.h"
 
 //libm17
 #include "libm17/m17.h"
 #include "term.h" //colored terminal font
-#define DEBUG_HALT				while(1);
+#define DEBUG_HALT				while(1)
 
 #define PORT					17000
 #define MAX_UDP_LEN				65535
@@ -508,7 +510,24 @@ void dev_set_rx_freq(uint32_t freq)
 	cmd[1]=6;
 	*((uint32_t*)&cmd[2])=freq;
 	write(fd, cmd, cmd[1]);
-	usleep(5000U);
+	
+	//wait for device's response
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=3);
+	uint8_t resp[3]={0};
+	read(fd, resp, 3);
+	
+	if(resp[2]==0)
+	{
+		dbg_print(0, "RX frequency: %lu Hz\n", config.rx_freq); //OK
+	}
+	else
+	{
+		dbg_print(TERM_YELLOW, "Error %d setting RX frequency: %lu Hz\n", resp[2], config.rx_freq); //error
+	}
 }
 
 void dev_set_tx_freq(uint32_t freq)
@@ -518,7 +537,24 @@ void dev_set_tx_freq(uint32_t freq)
 	cmd[1]=6;
 	*((uint32_t*)&cmd[2])=freq;
 	write(fd, cmd, cmd[1]);
-	usleep(5000U);
+
+	//wait for device's response
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=3);
+	uint8_t resp[3]={0};
+	read(fd, resp, 3);
+	
+	if(resp[2]==0)
+	{
+		dbg_print(0, "TX frequency: %lu Hz\n", config.tx_freq); //OK
+	}
+	else
+	{
+		dbg_print(TERM_YELLOW, "Error %d setting TX frequency: %lu Hz\n", resp[2], config.tx_freq); //error
+	}
 }
 
 void dev_set_freq_corr(int16_t corr)
@@ -528,7 +564,24 @@ void dev_set_freq_corr(int16_t corr)
 	cmd[1]=4;
 	*((int16_t*)&cmd[2])=corr;
 	write(fd, cmd, cmd[1]);
-	usleep(5000U);
+
+	//wait for device's response
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=3);
+	uint8_t resp[3]={0};
+	read(fd, resp, 3);
+	
+	if(resp[2]==0)
+	{
+		dbg_print(0, "Frequency correction: %d\n", config.freq_corr); //OK
+	}
+	else
+	{
+		dbg_print(TERM_YELLOW, "Error %d setting frequency correction: %d\n", resp[2], config.freq_corr); //OK //error
+	}
 }
 
 void dev_set_afc(uint8_t en)
@@ -539,7 +592,24 @@ void dev_set_afc(uint8_t en)
 	cmd[2]=en?1:0;
 
 	write(fd, cmd, cmd[1]);
-	usleep(5000U);
+
+	//wait for device's response
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=3);
+	uint8_t resp[3]={0};
+	read(fd, resp, 3);
+	
+	if(resp[2]==0)
+	{
+		; //OK
+	}
+	else
+	{
+		; //error
+	}
 }
 
 void dev_set_tx_power(float power) //powr in dBm
@@ -549,7 +619,24 @@ void dev_set_tx_power(float power) //powr in dBm
 	cmd[1]=3;
 	cmd[2]=roundf(power*4.0f);
 	write(fd, cmd, cmd[1]);
-	usleep(5000U);
+
+	//wait for device's response
+	do
+	{
+		ioctl(fd, FIONREAD, &uart_byte_count);
+	}
+	while(uart_byte_count!=3);
+	uint8_t resp[3]={0};
+	read(fd, resp, 3);
+	
+	if(resp[2]==0)
+	{
+		dbg_print(0, "TX power: %2.2f dBm\n", config.tx_pwr); //OK
+	}
+	else
+	{
+		dbg_print(TERM_YELLOW, "Error %d setting TX power: %2.2f dBm\n", resp[2], config.tx_pwr); //error
+	}
 }
 
 void dev_start_tx(void)
@@ -637,6 +724,7 @@ int main(int argc, char* argv[])
 		uint8_t gpio_err=0;
 		gpio_init();
 		gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
+		gpio_err|=gpio_set(config.pa_en, 0);
 		gpio_err|=gpio_set(config.nrst, 0);
 		usleep(50000U); //50ms
 		gpio_err|=gpio_set(config.nrst, 1);
@@ -728,10 +816,10 @@ int main(int argc, char* argv[])
 	}
 
 	//config the device
-	dbg_print(0, "RX frequency: %lu Hz\n", config.rx_freq); dev_set_rx_freq(config.rx_freq);
-	dbg_print(0, "TX frequency: %lu Hz\n", config.tx_freq); dev_set_tx_freq(config.tx_freq);
-	dbg_print(0, "Frequency correction: %d\n", config.freq_corr); dev_set_freq_corr(config.freq_corr);
-	dbg_print(0, "TX power: %2.2f dBm\n", config.tx_pwr); dev_set_tx_power(config.tx_pwr);
+	dev_set_rx_freq(config.rx_freq);
+	dev_set_tx_freq(config.tx_freq);
+	dev_set_freq_corr(config.freq_corr);
+	dev_set_tx_power(config.tx_pwr);
 	dbg_print(0, "AFC "); dev_set_afc(config.afc);
 	if(config.afc)
 		dbg_print(TERM_GREEN, "enabled\n");
@@ -770,6 +858,15 @@ int main(int argc, char* argv[])
 	lsf_sync_ext[4]=3; lsf_sync_ext[5]=-3; lsf_sync_ext[6]=3; lsf_sync_ext[7]=-3;
 	memcpy(&lsf_sync_ext[8], lsf_sync_symbols, 8);
 
+	//ZMQ
+	void *zmq_ctx = zmq_ctx_new();
+    void *bsb_downlink = zmq_socket(zmq_ctx, ZMQ_PUB);
+	dbg_print(0, "ZeroMQ ");
+	if(zmq_bind(bsb_downlink, "tcp://*:17017")==0)
+		dbg_print(TERM_GREEN, "OK\n");
+	else
+		dbg_print(TERM_RED, "ERROR\n");
+
 	//start RX
 	dev_start_rx();
 	dbg_print(0, "RX start\n");
@@ -791,6 +888,9 @@ int main(int argc, char* argv[])
 		if(uart_byte_count>0)
 		{
 			read(fd, (uint8_t*)&rx_bsb_sample, 1);
+
+			//publish over ZMQ
+			zmq_send(bsb_downlink, (char*)&rx_bsb_sample, 1, 0);
 
 			//push buffer
 			for(uint8_t i=0; i<sizeof(flt_buff)-1; i++)
@@ -1102,8 +1202,8 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn==0U) //update some parts of the LSF at FN=0
 				{
-					dev_stop_rx();
-					dbg_print(0, "RX stop\n");
+					//dev_stop_rx();
+					//dbg_print(0, "RX stop\n");
 					usleep(10*1000U);
 
 					//extract data
@@ -1154,7 +1254,7 @@ int main(int argc, char* argv[])
             		m17stream.lsf.crc[1]=ccrc&0xFF;
 
 					//set PA_EN=1 and initialize TX
-					//gpio_set(config.pa_en, 1);
+					gpio_set(config.pa_en, 1);
 					dev_start_tx();
 					usleep(10*1000U);
 				}
@@ -1389,10 +1489,11 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(10*40000U); //wait 400ms (10 M17 frames)
-					//back to RX
+					
+					//disable TX
 					gpio_set(config.pa_en, 0);
-					dev_start_rx();
-					dbg_print(0, "RX start\n");
+					//dev_start_rx();
+					//dbg_print(0, "RX start\n");
 				}
 
 				memset((uint8_t*)rx_buff, 0, rx_len);
