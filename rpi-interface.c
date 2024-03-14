@@ -80,9 +80,9 @@ struct config_t
 	uint32_t tx_freq;
 	uint8_t afc;
 	//GPIO
-	uint8_t pa_en;
-	uint8_t boot0;
-	uint8_t nrst;
+	uint16_t pa_en;
+	uint16_t boot0;
+	uint16_t nrst;
 } config;
 
 //device stuff
@@ -453,7 +453,7 @@ void gpio_init(void)
 	}
 }
 
-uint8_t gpio_set(uint8_t gpio, uint8_t state)
+uint8_t gpio_set(uint16_t gpio, uint8_t state)
 {
 	FILE* fp=NULL;
 	char tmp[256];
@@ -721,6 +721,7 @@ int main(int argc, char* argv[])
 
 	if(reset)
 	{
+		dbg_print(0, "GPIO init...");
 		uint8_t gpio_err=0;
 		gpio_init();
 		gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
@@ -748,7 +749,7 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_RED, "Invalid TX frequency\nExiting\n");
 		return 1;
 	}
-	if(config.tx_pwr<0.0f || config.tx_pwr>47.0f)
+	if(config.tx_pwr<0.0f || config.tx_pwr>47.75f)
 	{
 		dbg_print(TERM_RED, "Invalid TX power\nExiting\n");
 		return 1;
