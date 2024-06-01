@@ -951,11 +951,11 @@ int main(int argc, char* argv[])
 				//shift the buffer 1 position left - get rid of the encoded flushing bits
                 for(uint8_t i=0; i<30; i++)
                     lsf_b[i]=lsf_b[i+1];
-				for(uint8_t i=0; i<6; i++)
-				{
-					lsf.dst[i]=lsf_b[5-i];
-					lsf.src[i]=lsf_b[11-i];
-				}
+
+				//copy SRC and DST as-is, big-endian
+				memcpy(lsf.dst, &lsf_b[0], 6);
+				memcpy(lsf.src, &lsf_b[6], 6);
+
 				lsf.type[0]=lsf_b[13];
 				lsf.type[1]=lsf_b[12];
 
@@ -1089,14 +1089,6 @@ int main(int argc, char* argv[])
 								uint8_t call_dst[12]={0}, call_src[12]={0};
 								uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
 
-								//swap order
-								for(uint8_t i=0; i<3; i++)
-								{
-									uint8_t tmp;
-									tmp=lsf_b[i]; lsf_b[i]=lsf_b[5-i]; lsf_b[5-i]=tmp;
-									tmp=lsf_b[6+i]; lsf_b[6+i]=lsf_b[6+5-i]; lsf_b[6+5-i]=tmp;
-								}
-
 								decode_callsign_bytes(call_dst, &lsf_b[0]);
 								decode_callsign_bytes(call_src, &lsf_b[6]);
 
@@ -1208,25 +1200,18 @@ int main(int argc, char* argv[])
 					usleep(10*1000U);
 
 					//extract data
-					memcpy((uint8_t*)(&m17stream.lsf.dst), &rx_buff[6], 6);
-					memcpy((uint8_t*)(&m17stream.lsf.src), &rx_buff[6+6], 6);
+					memcpy(m17stream.lsf.dst, &rx_buff[6], 6);
+					memcpy(m17stream.lsf.src, &rx_buff[6+6], 6);
 
 					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
 					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, subtype: extended callsign data
 
-					//correct endianness
-					uint8_t tmp_dst[6], tmp_src[6];
-					for(uint8_t i=0; i<6; i++)
-						tmp_dst[i]=rx_buff[6+5-i];
-					for(uint8_t i=0; i<6; i++)
-						tmp_src[i]=rx_buff[12+5-i];
+					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
+					decode_callsign_bytes(src_call, m17stream.lsf.src);
 
-					decode_callsign_bytes(dst_call, tmp_dst);
-					decode_callsign_bytes(src_call, tmp_src);
-
-					//generate META field TODO: fix this
+					//generate META field TODO: fix this (probably fixed already)
 					//remove trailing spaces and suffixes
-					uint8_t trimmed_src[12];
+					uint8_t trimmed_src[12], enc_trimmed_src[6];
 					for(uint8_t i=0; i<12; i++)
 					{
 						if(src_call[i]!=' ')
@@ -1237,16 +1222,13 @@ int main(int argc, char* argv[])
 							break;
 						}
 					}
-					encode_callsign_bytes(tmp_src, trimmed_src);
-					uint64_t val;
-					uint8_t ext_ref[12];
+					encode_callsign_bytes(enc_trimmed_src, trimmed_src);
+					uint8_t ext_ref[12], enc_ext_ref[6];
 					sprintf((char*)ext_ref, "M17-M17 %c", config.module); //hardcoded for now
-					encode_callsign_value(&val, ext_ref);
-					for(uint8_t i=0; i<6; i++) //endianness fix
-					{
-						m17stream.lsf.meta[i]=tmp_src[5-i];
-						m17stream.lsf.meta[6+i]=*(((uint8_t*)&val)+(5-i));
-					}
+					encode_callsign_bytes(enc_ext_ref, ext_ref);
+
+					memcpy(&m17stream.lsf.meta[0], enc_trimmed_src, 6);
+					memcpy(&m17stream.lsf.meta[6], enc_ext_ref, 6);
 					memset(&m17stream.lsf.meta[12], 0, 2);
 
 					//append CRC
