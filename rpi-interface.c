@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- *  Created on: Dec 27, 2023
+ *  Created on: Sep 27, 2024
  *      Author: SP5WWP
  */
 
@@ -891,7 +891,7 @@ int main(int argc, char* argv[])
 			read(fd, (uint8_t*)&rx_bsb_sample, 1);
 
 			//publish over ZMQ
-			zmq_send(bsb_downlink, (char*)&rx_bsb_sample, 1, 0);
+			//zmq_send(bsb_downlink, (char*)&rx_bsb_sample, 1, 0); //TODO: send packs of more samples (960?)
 
 			//push buffer
 			for(uint8_t i=0; i<sizeof(flt_buff)-1; i++)
@@ -1202,9 +1202,13 @@ int main(int argc, char* argv[])
 					//extract data
 					memcpy(m17stream.lsf.dst, &rx_buff[6], 6);
 					memcpy(m17stream.lsf.src, &rx_buff[6+6], 6);
+					/*for(uint8_t i=0; i<6; i++)
+						m17stream.lsf.dst[5-i]=rx_buff[6+i];
+					for(uint8_t i=0; i<6; i++)
+						m17stream.lsf.src[5-i]=rx_buff[6+6+i];*/
 
 					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
-					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, subtype: extended callsign data
+					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, subtype field: extended callsign data
 
 					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
 					decode_callsign_bytes(src_call, m17stream.lsf.src);
@@ -1229,6 +1233,11 @@ int main(int argc, char* argv[])
 
 					memcpy(&m17stream.lsf.meta[0], enc_trimmed_src, 6);
 					memcpy(&m17stream.lsf.meta[6], enc_ext_ref, 6);
+					/*for(uint8_t i=0; i<6; i++)
+					{
+						m17stream.lsf.meta[0+i]=enc_trimmed_src[5-i];
+						m17stream.lsf.meta[6+i]=enc_ext_ref[5-i];
+					}*/
 					memset(&m17stream.lsf.meta[12], 0, 2);
 
 					//append CRC
@@ -1236,7 +1245,9 @@ int main(int argc, char* argv[])
             		m17stream.lsf.crc[0]=ccrc>>8;
             		m17stream.lsf.crc[1]=ccrc&0xFF;
 
-					//set PA_EN=1 and initialize TX
+					//stop RX, set PA_EN=1 and initialize TX
+					dev_stop_rx();
+					usleep(2*1000U);
 					gpio_set(config.pa_en, 1);
 					dev_start_tx();
 					usleep(10*1000U);
@@ -1475,8 +1486,13 @@ int main(int argc, char* argv[])
 					
 					//disable TX
 					gpio_set(config.pa_en, 0);
-					//dev_start_rx();
-					//dbg_print(0, "RX start\n");
+
+					//restart RX
+					dev_start_rx();
+					time(&rawtime);
+    				timeinfo=localtime(&rawtime);
+					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				}
 
 				memset((uint8_t*)rx_buff, 0, rx_len);
