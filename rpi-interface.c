@@ -1200,20 +1200,16 @@ int main(int argc, char* argv[])
 					usleep(10*1000U);
 
 					//extract data
-					memcpy(m17stream.lsf.dst, &rx_buff[6], 6);
+					memcpy(m17stream.lsf.dst, "\xFF\xFF\xFF\xFF\xFF\xFF", 6);
 					memcpy(m17stream.lsf.src, &rx_buff[6+6], 6);
-					/*for(uint8_t i=0; i<6; i++)
-						m17stream.lsf.dst[5-i]=rx_buff[6+i];
-					for(uint8_t i=0; i<6; i++)
-						m17stream.lsf.src[5-i]=rx_buff[6+6+i];*/
-
-					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
-					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, subtype field: extended callsign data
-
 					decode_callsign_bytes(dst_call, m17stream.lsf.dst);
 					decode_callsign_bytes(src_call, m17stream.lsf.src);
 
-					//generate META field TODO: fix this (probably fixed already)
+					//set TYPE field
+					memcpy(m17stream.lsf.type, &rx_buff[18], 2);
+					m17stream.lsf.type[1]|=0x2U<<5; //no encryption, so the subtype field defines the META field contents: extended callsign data
+
+					//generate META field
 					//remove trailing spaces and suffixes
 					uint8_t trimmed_src[12], enc_trimmed_src[6];
 					for(uint8_t i=0; i<12; i++)
@@ -1227,18 +1223,15 @@ int main(int argc, char* argv[])
 						}
 					}
 					encode_callsign_bytes(enc_trimmed_src, trimmed_src);
+
 					uint8_t ext_ref[12], enc_ext_ref[6];
 					sprintf((char*)ext_ref, "M17-M17 %c", config.module); //hardcoded for now
 					encode_callsign_bytes(enc_ext_ref, ext_ref);
 
-					memcpy(&m17stream.lsf.meta[0], enc_trimmed_src, 6);
-					memcpy(&m17stream.lsf.meta[6], enc_ext_ref, 6);
-					/*for(uint8_t i=0; i<6; i++)
-					{
-						m17stream.lsf.meta[0+i]=enc_trimmed_src[5-i];
-						m17stream.lsf.meta[6+i]=enc_ext_ref[5-i];
-					}*/
+					memcpy(&m17stream.lsf.meta[0], m17stream.lsf.src, 6); //originator
+					memcpy(&m17stream.lsf.meta[6], enc_ext_ref, 6); //reflector
 					memset(&m17stream.lsf.meta[12], 0, 2);
+					memcpy(m17stream.lsf.src, enc_trimmed_src, 6);
 
 					//append CRC
 					uint16_t ccrc=LSF_CRC(&m17stream.lsf);
