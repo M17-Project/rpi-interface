@@ -92,7 +92,7 @@ uint8_t cmd[8];
 struct m17stream_t
 {
 	uint16_t sid;
-	struct LSF lsf;
+	lsf_t lsf;
 	uint16_t fn;
 	uint8_t pld[16];
 } m17stream;
@@ -108,7 +108,7 @@ float f_flt_buff[8*5+2*(8*5+4800/25*5)+2];	//8 preamble symbols, 8 for the syncw
 											//floor(sps/2)=2 extra samples for timing error correction
 enum rx_state_t rx_state=RX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
-struct LSF lsf; 							//recovered LSF
+lsf_t lsf; 									//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
 uint16_t fn, last_fn=0xFFFFU;				//current and last received FN
 uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
