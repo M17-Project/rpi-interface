@@ -73,7 +73,7 @@ struct config_t
 	uint32_t uart_rate;
 	uint8_t node[15];
 	uint8_t module;
-	uint64_t enc_node;
+	uint8_t enc_node[6];
 	int16_t freq_corr;
 	float tx_pwr;
 	uint32_t rx_freq;
@@ -669,9 +669,8 @@ void sigint_handler(int val)
 {
 	if(val){}; //get rid of unused variable warning
 	dbg_print(TERM_YELLOW, "\nSIGINT caught, disconnecting\n");
-	sprintf((char*)tx_buff, "DISC123456"); //that "123456" is just a placeholder
-	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-		tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
+	sprintf((char*)tx_buff, "DISCxxxxxx"); //that "xxxxxx" is just a placeholder
+	memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
 	refl_send(tx_buff, 4+6); //DISC
 	dbg_print(TERM_YELLOW, "Exiting\n");
 	exit(0);
@@ -845,12 +844,11 @@ int main(int argc, char* argv[])
 	memset((char*)&daddr, 0, sizeof(daddr));
 
 	//encode M17 callsign from argv
-	encode_callsign_value(&(config.enc_node), config.node);
+	encode_callsign_bytes(config.enc_node, config.node);
 
 	//send "CONN"
-	sprintf((char*)tx_buff, "CONN123456%c", config.module);
-	for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-		tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
+	sprintf((char*)tx_buff, "CONNxxxxxx%c", config.module);
+	memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
 	refl_send(tx_buff, 4+6+1);
 	dbg_print(TERM_GREEN, " OK\n");
 
@@ -863,10 +861,11 @@ int main(int argc, char* argv[])
 	void *zmq_ctx = zmq_ctx_new();
     void *bsb_downlink = zmq_socket(zmq_ctx, ZMQ_PUB);
 	dbg_print(0, "ZeroMQ ");
-	if(zmq_bind(bsb_downlink, "tcp://*:17017")==0)
+	if(zmq_bind(bsb_downlink, "tcp://*:17017")==0) //TODO: make the port number configurable
 		dbg_print(TERM_GREEN, "OK\n");
 	else
 		dbg_print(TERM_RED, "ERROR\n");
+	//TODO: add a buffer with a variable holding amount of samples
 
 	//start RX
 	dev_start_rx();
@@ -1178,9 +1177,8 @@ int main(int argc, char* argv[])
 
 			if(strstr((char*)rx_buff, "PING")==(char*)rx_buff)
 			{
-				sprintf((char*)tx_buff, "PONG123456"); //that "123456" is just a placeholder
-				for(uint8_t i=0; i<6; i++) //memcpy doesn't work here - endianness issue
-					tx_buff[4+5-i]=*((uint8_t*)&config.enc_node+i);
+				sprintf((char*)tx_buff, "PONGxxxxxx"); //that "xxxxxx" is just a placeholder
+				memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
 				refl_send(tx_buff, 4+6); //PONG
 				memset((uint8_t*)rx_buff, 0, rx_len);
 				//dbg_print(TERM_YELLOW, "PING\n");
