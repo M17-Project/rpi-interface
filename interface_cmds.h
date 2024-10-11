@@ -2,10 +2,12 @@
  * interface_cmds.h
  *
  *  Created on: Dec 27, 2023
- *      Author: SP5WWP
+ *      Author: Wojciech Kaczmarski, SP5WWP
+ *              M17 Project
  */
 #pragma once
 
+//TODO: sync this with CARI
 enum cmd_t
 {
 	CMD_PING,

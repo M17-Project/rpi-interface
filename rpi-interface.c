@@ -1,8 +1,9 @@
 /*
  * rpi-interface.c
  *
- *  Created on: Sep 27, 2024
- *      Author: SP5WWP
+ *  Edited on: Oct 11, 2024
+ *     Author: Wojciech Kaczmarski, SP5WWP
+ *             M17 Project
  */
 
 #include <stdio.h>
@@ -71,7 +72,8 @@ struct config_t
 	uint8_t log_path[128];
 	uint8_t uart[64];
 	uint32_t uart_rate;
-	uint8_t node[15];
+	uint8_t node[10];
+	uint8_t reflector[8]; //TODO: add IP address field
 	uint8_t module;
 	uint8_t enc_node[6];
 	int16_t freq_corr;
@@ -295,7 +297,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 			if(strstr(line, "log_path")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
-				memcpy((char*)&(cfg->uart), strstr(line, "\"")+1, len);
+				memcpy((char*)&(cfg->log_path), strstr(line, "\"")+1, len);
 				cfg->log_path[len]=0;
 			}
 			else if(strstr(line, "device")!=NULL)
@@ -308,16 +310,36 @@ int8_t load_config(struct config_t *cfg, char *path)
 			{
 				cfg->uart_rate=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "name")!=NULL)
+			else if(strstr(line, "node")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy((char*)&(cfg->node), strstr(line, "\"")+1, len);
 				cfg->node[len]=0;
 			}
+			else if(strstr(line, "refelctor")!=NULL)
+			{
+				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
+				memcpy((char*)&(cfg->reflector), strstr(line, "\"")+1, len);
+				cfg->reflector[len]=0;
+			}
 			else if(strstr(line, "module")!=NULL)
 			{
 				cfg->module=*(strstr(line, "\"")+1);
 			}
+
+			else if(strstr(line, "nrst")!=NULL)
+			{
+				cfg->nrst=atoi(strstr(line, "=")+1);
+			}
+			else if(strstr(line, "pa_en")!=NULL)
+			{
+				cfg->pa_en=atoi(strstr(line, "=")+1);
+			}
+			else if(strstr(line, "boot0")!=NULL)
+			{
+				cfg->boot0=atoi(strstr(line, "=")+1);
+			}
+
 			else if(strstr(line, "tx_freq")!=NULL)
 			{
 				cfg->tx_freq=atoi(strstr(line, "=")+1);
@@ -340,18 +362,6 @@ int8_t load_config(struct config_t *cfg, char *path)
 					cfg->afc=1;
 				else
 					cfg->afc=0;
-			}
-			else if(strstr(line, "nrst")!=NULL)
-			{
-				cfg->nrst=atoi(strstr(line, "=")+1);
-			}
-			else if(strstr(line, "pa_en")!=NULL)
-			{
-				cfg->pa_en=atoi(strstr(line, "=")+1);
-			}
-			else if(strstr(line, "boot0")!=NULL)
-			{
-				cfg->boot0=atoi(strstr(line, "=")+1);
 			}
 		}
 
@@ -718,9 +728,10 @@ int main(int argc, char* argv[])
 		}
 	}
 
+	//reset the device and exit
 	if(reset)
 	{
-		dbg_print(0, "GPIO init...");
+		dbg_print(0, "Device reset...");
 		uint8_t gpio_err=0;
 		gpio_init();
 		gpio_err|=gpio_set(config.boot0, 0); //all pins should be at logic low already, but better be safe than sorry
@@ -728,7 +739,7 @@ int main(int argc, char* argv[])
 		gpio_err|=gpio_set(config.nrst, 0);
 		usleep(50000U); //50ms
 		gpio_err|=gpio_set(config.nrst, 1);
-		dbg_print(0, "Device reset");
+
 		if(gpio_err)
 			dbg_print(TERM_RED, " error\n");
 		else
@@ -777,7 +788,7 @@ int main(int argc, char* argv[])
 	gpio_err|=gpio_set(config.nrst, 0); //both pins should be at logic low already, but better be safe than sorry
 	usleep(50000U); //50ms
 	gpio_err|=gpio_set(config.nrst, 1);
-	usleep(1000000U); //1s for RRU boot-up
+	usleep(1000000U); //1s for device boot-up
 	if(gpio_err==0)
 		dbg_print(TERM_GREEN, " OK\n");
 
