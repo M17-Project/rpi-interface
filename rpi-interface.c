@@ -37,8 +37,9 @@
 #include "term.h" //colored terminal font
 #define DEBUG_HALT				while(1)
 
-#define PORT					17000
+#define PORT					17000										//should be fine for most of the reflectors TODO: maybe parametrize this?
 #define MAX_UDP_LEN				65535
+#define ZMQ_RX_BUFF_SIZE		960											//how many RX baseband samples do we want to publish over ZMQ at once?
 
 #define RX_SYMBOL_SCALING_COEFF	(1.0f/(0.8f/(40.0e3f/2097152*0xAD)*129.0f))	//CC1200 User's Guide, p. 24
 																			//0xAD is `DEVIATION_M`, 2097152=2^21
@@ -876,7 +877,8 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_GREEN, "OK\n");
 	else
 		dbg_print(TERM_RED, "ERROR\n");
-	//TODO: add a buffer with a variable holding amount of samples
+	int8_t zmq_samp_buff[ZMQ_RX_BUFF_SIZE];
+	uint16_t zmq_samples=0;
 
 	//start RX
 	dev_start_rx();
@@ -901,7 +903,12 @@ int main(int argc, char* argv[])
 			read(fd, (uint8_t*)&rx_bsb_sample, 1);
 
 			//publish over ZMQ
-			//zmq_send(bsb_downlink, (char*)&rx_bsb_sample, 1, 0); //TODO: send packs of more samples (960?)
+			zmq_samp_buff[zmq_samples++]=rx_bsb_sample;
+			if(zmq_samples==ZMQ_RX_BUFF_SIZE)
+			{
+				zmq_send(bsb_downlink, (char*)zmq_samp_buff, ZMQ_RX_BUFF_SIZE, 0);
+				zmq_samples=0;
+			}
 
 			//push buffer
 			for(uint8_t i=0; i<sizeof(flt_buff)-1; i++)
