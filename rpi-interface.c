@@ -1241,7 +1241,7 @@ int main(int argc, char* argv[])
 					encode_callsign_bytes(enc_trimmed_src, trimmed_src);
 
 					uint8_t ext_ref[12], enc_ext_ref[6];
-					sprintf((char*)ext_ref, "M17-M17 %c", config.module); //hardcoded for now
+					sprintf((char*)ext_ref, "%s %c", config.reflector, config.module);
 					encode_callsign_bytes(enc_ext_ref, ext_ref);
 
 					memcpy(&m17stream.lsf.meta[0], m17stream.lsf.src, 6); //originator
