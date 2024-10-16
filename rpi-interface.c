@@ -892,7 +892,7 @@ int main(int argc, char* argv[])
 
 	//time
 	time_t rawtime;
-    struct tm * timeinfo;
+    struct tm *timeinfo;
 
 	while(1)
 	{
