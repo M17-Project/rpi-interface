@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- *  Edited on: Oct 11, 2024
+ *  Edited on: Oct 16, 2024
  *     Author: Wojciech Kaczmarski, SP5WWP
  *             M17 Project
  */
@@ -35,6 +35,7 @@
 //libm17
 #include "libm17/m17.h"
 #include "term.h" //colored terminal font
+
 #define DEBUG_HALT				while(1)
 
 #define PORT					17000										//should be fine for most of the reflectors TODO: maybe parametrize this?
@@ -106,10 +107,17 @@ enum rx_state_t
 	RX_SYNCD
 };
 
+enum tx_state_t
+{
+	TX_IDLE,
+	TX_ACTIVE
+};
+
 int8_t flt_buff[8*5+1];						//length of this has to match RRC filter's length
 float f_flt_buff[8*5+2*(8*5+4800/25*5)+2];	//8 preamble symbols, 8 for the syncword, and 960 for the payload.
 											//floor(sps/2)=2 extra samples for timing error correction
 enum rx_state_t rx_state=RX_IDLE;
+enum tx_state_t tx_state=TX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
 lsf_t lsf; 									//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
@@ -120,6 +128,9 @@ uint8_t lich_parts=0;						//LICH chunks received (bit flags)
 uint8_t got_lsf=0;							//got LSF? either from LSF or reconstructed from LICH
 
 uint8_t uart_byte_count;					//how many bytes are available on UART
+
+//timer for timeouts
+uint32_t tx_timer=0;
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -141,6 +152,28 @@ void dbg_print(const char* color_code, const char* fmt, ...)
 	{
 		printf(str);
 	}
+}
+
+void move_cursor(uint8_t x, uint8_t y)
+{
+	printf("\033[%d;%dH", y, x);
+}
+
+uint32_t get_ms(void)
+{
+	struct timespec spec;
+
+    clock_gettime(CLOCK_REALTIME, &spec);
+
+	time_t s = spec.tv_sec;
+    uint32_t ms = roundf(spec.tv_nsec/1.0e6); //convert nanoseconds to milliseconds
+    if(ms>999)
+	{
+        s++;
+        ms=0;
+    }
+
+	return s*1000 + ms;
 }
 
 //UART magic
@@ -1177,7 +1210,7 @@ int main(int argc, char* argv[])
 					rx_state=RX_IDLE;
 					sample_cnt=0;
 					first_frame=1;
-					last_fn=0xFFFFU;
+					last_fn=0xFFFFU; //TODO: there's a small chance that this will cause problems (it's a valid frame number)
 					lich_parts=0;
 					got_lsf=0;
 				}
@@ -1203,14 +1236,28 @@ int main(int argc, char* argv[])
 			}
 			else if(strstr((char*)rx_buff, "M17 ")==(char*)rx_buff)
 			{
+				tx_timer=get_ms();
+
 				m17stream.sid=((uint16_t)rx_buff[4]<<8)|rx_buff[5];
 				m17stream.fn=((uint16_t)rx_buff[34]<<8)|rx_buff[35];
 				static uint8_t dst_call[10]={0};
 				static uint8_t src_call[10]={0};
 				memcpy(m17stream.pld, &rx_buff[(32+16+224+16)/8U], 128/8);
 
-				if(m17stream.fn==0U) //update some parts of the LSF at FN=0
+				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
+				uint32_t frame_buff_cnt;			//buffer counter
+				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*sps
+				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
+				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
+				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
+				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
+				static float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
+
+				if(tx_state==TX_IDLE) //first received frame
 				{
+					tx_state=TX_ACTIVE;
+
+					//TODO: this needs to happen every time a new transmission appears
 					//dev_stop_rx();
 					//dbg_print(0, "RX stop\n");
 					usleep(10*1000U);
@@ -1254,25 +1301,26 @@ int main(int argc, char* argv[])
             		m17stream.lsf.crc[0]=ccrc>>8;
             		m17stream.lsf.crc[1]=ccrc&0xFF;
 
+					//log to file
+					FILE* logfile=fopen((char*)config.log_path, "awb");
+					if(logfile!=NULL)
+					{
+						time(&rawtime);
+    					timeinfo=localtime(&rawtime);
+						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
+							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+							src_call, dst_call);
+						fclose(logfile);
+					}
+
 					//stop RX, set PA_EN=1 and initialize TX
 					dev_stop_rx();
 					usleep(2*1000U);
 					gpio_set(config.pa_en, 1);
 					dev_start_tx();
 					usleep(10*1000U);
-				}
 				
-				//generate frame symbols, filter them and send out to the device
-				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
-				uint32_t frame_buff_cnt;			//buffer counter
-				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*sps
-				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
-				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
-				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
-				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
-				static float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
-				if(m17stream.fn==0U)
-				{
+					//generate frame symbols, filter them and send out to the device
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
 					//let's start with the preamble
 					frame_buff_cnt=0;
@@ -1330,13 +1378,13 @@ int main(int argc, char* argv[])
 					}
 					write(fd, (uint8_t*)samples, sizeof(samples));
 
-					//finally, frame 0
+					//finally, first frame
 					frame_buff_cnt=0;
 					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
 					extract_LICH(lich, 0, &(m17stream.lsf)); //m17stream.fn % 6 = 0
 					encode_LICH(lich_encoded, lich);
 					unpack_LICH(enc_bits, lich_encoded);
-					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, 0); //m17stream.fn = 0
+					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
 					reorder_bits(rf_bits, enc_bits);
             		randomize_bits(rf_bits);
 					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
@@ -1402,27 +1450,13 @@ int main(int argc, char* argv[])
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] NET FRM: ",
+				/*dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] NET FRM: ",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, "SID: %04X | FN: %04X | DST: %-9s | SRC: %-9s | TYPE: %04X | META: ",
 						m17stream.sid, m17stream.fn&0x7FFFU, dst_call, src_call, ((uint16_t)m17stream.lsf.type[0]<<8)|m17stream.lsf.type[1]);
 				for(uint8_t i=0; i<14; i++)
 					dbg_print(TERM_YELLOW, "%02X", m17stream.lsf.meta[i]);
-				dbg_print(TERM_YELLOW, "\n");
-
-				if(m17stream.fn==0U)
-				{
-					FILE* logfile=fopen((char*)config.log_path, "awb");
-					if(logfile!=NULL)
-					{
-						time(&rawtime);
-    					timeinfo=localtime(&rawtime);
-						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
-							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
-							src_call, dst_call);
-						fclose(logfile);
-					}
-				}
+				dbg_print(TERM_YELLOW, "\n");*/
 
 				if(m17stream.fn&0x8000U) //last stream frame
 				{
@@ -1502,10 +1536,35 @@ int main(int argc, char* argv[])
     				timeinfo=localtime(&rawtime);
 					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+					tx_state=TX_IDLE;
 				}
 
 				memset((uint8_t*)rx_buff, 0, rx_len);
 			}
+		}
+
+		//tx timeout
+		if(tx_state==TX_ACTIVE && (get_ms()-tx_timer)>240) //240ms timeout
+		{
+			time(&rawtime);
+    		timeinfo=localtime(&rawtime);
+
+			dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] TX timeout\n",
+				timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+			//usleep(10*40000U); //wait 400ms (10 M17 frames)
+			
+			//disable TX
+			gpio_set(config.pa_en, 0);
+
+			//restart RX
+			dev_start_rx();
+			time(&rawtime);
+    		timeinfo=localtime(&rawtime);
+			dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+				timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+			tx_state=TX_IDLE;
 		}
 	}
 	
