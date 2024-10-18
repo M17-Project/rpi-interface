@@ -154,6 +154,11 @@ void dbg_print(const char* color_code, const char* fmt, ...)
 	}
 }
 
+void move_cursor(uint8_t x, uint8_t y)
+{
+	printf("\033[%d;%dH", y, x);
+}
+
 uint32_t get_ms(void)
 {
 	struct timespec spec;
