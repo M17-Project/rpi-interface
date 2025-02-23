@@ -144,13 +144,13 @@ void dbg_print(const char* color_code, const char* fmt, ...)
 
 	if(color_code!=NULL)
 	{
-		puts(color_code);
-		puts(str);
-		puts(TERM_DEFAULT);
+		fputs(color_code, stdout);
+		fputs(str, stdout);
+		fputs(TERM_DEFAULT, stdout);
 	}
 	else
 	{
-		puts(str);
+		fputs(str, stdout);
 	}
 }
 
