@@ -1,9 +1,9 @@
 /*
  * rpi-interface.c
  *
- *  Edited on: Oct 16, 2024
+ *  Edited on: Feb 23, 2025
  *     Author: Wojciech Kaczmarski, SP5WWP
- *             M17 Project
+ *             M17 Foundation
  */
 
 #include <stdio.h>
@@ -144,13 +144,13 @@ void dbg_print(const char* color_code, const char* fmt, ...)
 
 	if(color_code!=NULL)
 	{
-		printf(color_code);
-		printf(str);
-		printf(TERM_DEFAULT);
+		puts(color_code);
+		puts(str);
+		puts(TERM_DEFAULT);
 	}
 	else
 	{
-		printf(str);
+		puts(str);
 	}
 }
 
@@ -970,8 +970,11 @@ int main(int argc, char* argv[])
 			symbols[15]=f_flt_buff[960+15*5];
 			float dist_str_b=eucl_norm(&symbols[8], str_sync_symbols, 8);
 			float dist_str=sqrtf(dist_str_a*dist_str_a+dist_str_b*dist_str_b);
+			float dist_pkt=eucl_norm(&symbols[0], pkt_sync_symbols, 8);
 
 			//fwrite(&dist_str, 4, 1, fp);
+
+			//LSF received at idle state
 			if(dist_lsf<=4.5f && rx_state==RX_IDLE)
 			{
 				//find L2's minimum
@@ -1064,6 +1067,8 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_RED, " CRC ERR\n");
 				}
 			}
+
+			//stream frame received
 			else if(dist_str<=5.0f)
 			{
 				rx_state=RX_SYNCD;
@@ -1200,6 +1205,17 @@ int main(int argc, char* argv[])
 
 				first_frame=0;
 			}
+
+			//TODO: WIP packet mode
+			else if(dist_pkt<=2.0f)
+			{
+				time(&rawtime);
+				timeinfo=localtime(&rawtime);
+
+				dbg_print(0, "[%02d:%02d:%02d]",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_YELLOW, " RF PKT?\n");
+			}
 			
 			//RX sync timeout
 			if(rx_state==RX_SYNCD)
@@ -1226,6 +1242,7 @@ int main(int argc, char* argv[])
 			//debug
 			//dbg_print(0, "Size:%d\nPayload:%s\n", rx_len, rx_buff);
 
+			//PING-PONG
 			if(strstr((char*)rx_buff, "PING")==(char*)rx_buff)
 			{
 				sprintf((char*)tx_buff, "PONGxxxxxx"); //that "xxxxxx" is just a placeholder
@@ -1234,6 +1251,8 @@ int main(int argc, char* argv[])
 				memset((uint8_t*)rx_buff, 0, rx_len);
 				//dbg_print(TERM_YELLOW, "PING\n");
 			}
+
+			//M17 stream frame data - "Steaming Mode IP Packet, Single Packet Method"
 			else if(strstr((char*)rx_buff, "M17 ")==(char*)rx_buff)
 			{
 				tx_timer=get_ms();
@@ -1247,10 +1266,6 @@ int main(int argc, char* argv[])
 				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
 				uint32_t frame_buff_cnt;			//buffer counter
 				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*sps
-				uint8_t lich[6];                    //48 bits packed raw, unencoded LICH
-				uint8_t lich_encoded[12];           //96 bits packed, encoded LICH
-				uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
-				uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
 				static float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
 
 				if(tx_state==TX_IDLE) //first received frame
@@ -1324,7 +1339,8 @@ int main(int argc, char* argv[])
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
 					//let's start with the preamble
 					frame_buff_cnt=0;
-					send_preamble(frame_symbols, &frame_buff_cnt, 0); //0 - LSF preamble
+					gen_preamble(frame_symbols, &frame_buff_cnt, PREAM_LSF);
+
 					//filter and send out to the device
 					memset((uint8_t*)&flt_buff[0], 0U, sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1349,12 +1365,8 @@ int main(int argc, char* argv[])
 					write(fd, (uint8_t*)samples, sizeof(samples));
 
 					//now the LSF
-					frame_buff_cnt=0;
-					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_LSF);
-					conv_encode_LSF(enc_bits, &(m17stream.lsf));
-					reorder_bits(rf_bits, enc_bits);
-					randomize_bits(rf_bits);
-					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
+					gen_frame(frame_symbols, NULL, FRAME_LSF, &(m17stream.lsf), 0, 0);
+
 					//filter and send out to the device
 					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1378,16 +1390,9 @@ int main(int argc, char* argv[])
 					}
 					write(fd, (uint8_t*)samples, sizeof(samples));
 
-					//finally, first frame
-					frame_buff_cnt=0;
-					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
-					extract_LICH(lich, 0, &(m17stream.lsf)); //m17stream.fn % 6 = 0
-					encode_LICH(lich_encoded, lich);
-					unpack_LICH(enc_bits, lich_encoded);
-					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
-					reorder_bits(rf_bits, enc_bits);
-            		randomize_bits(rf_bits);
-					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
+					//finally, the first frame
+					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+
 					//filter and send out to the device
 					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1414,15 +1419,8 @@ int main(int argc, char* argv[])
 				else
 				{
 					//only one frame is needed
-					frame_buff_cnt=0;
-					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
-					extract_LICH(lich, m17stream.fn%6, &(m17stream.lsf)); //m17stream.fn % 6 - LICH_CNT
-					encode_LICH(lich_encoded, lich);
-					unpack_LICH(enc_bits, lich_encoded);
-					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
-					reorder_bits(rf_bits, enc_bits);
-            		randomize_bits(rf_bits);
-					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
+					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+
 					//filter and send out to the device
 					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1462,15 +1460,8 @@ int main(int argc, char* argv[])
 				{
 					//two frames need to be sent - last stream frame and EOT marker
 					//last frame
-					frame_buff_cnt=0;
-					send_syncword(frame_symbols, &frame_buff_cnt, SYNC_STR);
-					extract_LICH(lich, (m17stream.fn&0x7FFFU)%6, &(m17stream.lsf)); //(m17stream.fn&0x7FFF) % 6 - LICH_CNT
-					encode_LICH(lich_encoded, lich);
-					unpack_LICH(enc_bits, lich_encoded);
-					conv_encode_stream_frame(&enc_bits[96], m17stream.pld, m17stream.fn);
-					reorder_bits(rf_bits, enc_bits);
-            		randomize_bits(rf_bits);
-					send_data(frame_symbols, &frame_buff_cnt, rf_bits);
+					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
+
 					//filter and send out to the device
 					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1496,7 +1487,8 @@ int main(int argc, char* argv[])
 
 					//now the final EOT marker
 					frame_buff_cnt=0;
-					send_eot(frame_symbols, &frame_buff_cnt);
+					gen_eot(frame_symbols, &frame_buff_cnt);
+
 					//filter and send out to the device
 					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
 					for(uint16_t i=0; i<SYM_PER_FRA; i++)
@@ -1541,6 +1533,16 @@ int main(int argc, char* argv[])
 				}
 
 				memset((uint8_t*)rx_buff, 0, rx_len);
+			}
+
+			//M17 packet data - "Packet Mode IP Packet"
+			//TODO: WIP packet mode
+			else if(strstr((char*)rx_buff, "M17P")==(char*)rx_buff)
+			{
+				time(&rawtime);
+				timeinfo=localtime(&rawtime);
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] M17 packet received over the Internet\n",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 			}
 		}
 
