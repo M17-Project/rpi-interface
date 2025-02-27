@@ -11,4 +11,5 @@
 #define TERM_GREEN		"\033[92m"
 #define TERM_RED		"\033[91m"
 #define TERM_YELLOW		"\033[33m"
+#define TERM_SKYBLUE	"\033[96m"
 #define TERM_DEFAULT	"\033[39m"

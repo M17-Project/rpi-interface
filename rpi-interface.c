@@ -1541,15 +1541,19 @@ int main(int argc, char* argv[])
 			{
 				time(&rawtime);
 				timeinfo=localtime(&rawtime);
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] M17 packet received over the Internet\n",
-					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_GREEN, " M17 packet received over the Internet\n");
 
-				uint8_t call_dst[10], call_src[10], can;
+				uint8_t call_dst[10], call_src[10], can, type;
 				decode_callsign_bytes(call_dst, &rx_buff[4+0]);
 				decode_callsign_bytes(call_src, &rx_buff[4+6]);
 				can=(*((uint16_t*)&rx_buff[4+6+6])>>7)&0xF;
+				type=rx_buff[4+240/8];
 				
-				dbg_print(TERM_YELLOW, " DST: %-9s | SRC: %-9s | CAN=%d\n", call_dst, call_src, can);
+				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "DST: "); dbg_print(TERM_DEFAULT, "%s\n", call_dst);
+				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "SRC: "); dbg_print(TERM_DEFAULT, "%s\n", call_src);
+				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "CAN: "); dbg_print(TERM_DEFAULT, "%d\n", can);
+				dbg_print(TERM_DEFAULT, " └ "); dbg_print(TERM_YELLOW, "TYPE: "); dbg_print(TERM_DEFAULT, "%d\n", type); //assuming 1-byte type specifier
 
 				//TODO: handle TX here
 				;
