@@ -1044,7 +1044,7 @@ int main(int argc, char* argv[])
 					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
 					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
 
-					if(*((uint16_t*)lsf.type)&1) //if stream
+					//if(*((uint16_t*)lsf.type)&1) //if stream
 					{
 						dbg_print(TERM_GREEN, " CRC OK ");
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
@@ -1206,15 +1206,15 @@ int main(int argc, char* argv[])
 				first_frame=0;
 			}
 
-			//TODO: WIP packet mode
+			//TODO: handle packet mode reception over RF
 			else if(dist_pkt<=2.0f)
 			{
-				time(&rawtime);
+				/*time(&rawtime);
 				timeinfo=localtime(&rawtime);
 
 				dbg_print(0, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-				dbg_print(TERM_YELLOW, " RF PKT?\n");
+				dbg_print(TERM_YELLOW, " RF PKT?\n");*/
 			}
 			
 			//RX sync timeout
@@ -1543,6 +1543,16 @@ int main(int argc, char* argv[])
 				timeinfo=localtime(&rawtime);
 				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] M17 packet received over the Internet\n",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+				uint8_t call_dst[10], call_src[10], can;
+				decode_callsign_bytes(call_dst, &rx_buff[4+0]);
+				decode_callsign_bytes(call_src, &rx_buff[4+6]);
+				can=(*((uint16_t*)&rx_buff[4+6+6])>>7)&0xF;
+				
+				dbg_print(TERM_YELLOW, " DST: %-9s | SRC: %-9s | CAN=%d\n", call_dst, call_src, can);
+
+				//TODO: handle TX here
+				;
 			}
 		}
 
