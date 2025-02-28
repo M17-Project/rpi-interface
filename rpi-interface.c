@@ -726,29 +726,37 @@ void filter_symbols(int8_t out[SYM_PER_FRA*5], const int8_t in[SYM_PER_FRA], con
 	#define FLT_LEN 41
 	static int8_t last[FLT_LEN]; //memory for last symbols
 
-	for(uint8_t i=0; i<SYM_PER_FRA; i++)
+	if(out!=NULL)
 	{
-		for(uint8_t j=0; j<5; j++)
+		for(uint8_t i=0; i<SYM_PER_FRA; i++)
 		{
-			for(uint8_t k=0; k<FLT_LEN-1; k++)
-				last[k]=last[k+1];
-
-			if(j==0)
+			for(uint8_t j=0; j<5; j++)
 			{
-				if(phase_inv) //optional phase inversion
-					last[FLT_LEN-1]=-in[i];
+				for(uint8_t k=0; k<FLT_LEN-1; k++)
+					last[k]=last[k+1];
+
+				if(j==0)
+				{
+					if(phase_inv) //optional phase inversion
+						last[FLT_LEN-1]=-in[i];
+					else
+						last[FLT_LEN-1]= in[i];
+				}
 				else
-					last[FLT_LEN-1]= in[i];
+					last[FLT_LEN-1]=0;
+
+				float acc=0.0f;
+				for(uint8_t k=0; k<FLT_LEN; k++)
+					acc+=last[k]*flt[k];
+
+				out[i*5+j]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 			}
-			else
-				last[FLT_LEN-1]=0;
-
-			float acc=0.0f;
-			for(uint8_t k=0; k<FLT_LEN; k++)
-				acc+=last[k]*flt[k];
-
-			out[i*5+j]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
 		}
+	}
+	else
+	{
+		for(uint8_t i=0; i<FLT_LEN; i++)
+			last[i]=0;
 	}
 }
 
@@ -1366,8 +1374,7 @@ int main(int argc, char* argv[])
 					usleep(10*1000U);
 
 					//flush the RRC baseband filter
-					int8_t flush[SYM_PER_FRA]={0};
-					filter_symbols(NULL, flush, rrc_taps_5, 0);
+					filter_symbols(NULL, NULL, NULL, 0);
 				
 					//generate frame symbols, filter them and send out to the device
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
