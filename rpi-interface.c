@@ -764,6 +764,10 @@ int main(int argc, char* argv[])
 {
 	signal(SIGINT, sigint_handler);
 
+	//time
+	time_t rawtime;
+    struct tm *timeinfo;
+
 	if(argc<3)
 	{
 		dbg_print(TERM_RED, "Invalid params\nExiting\n");
@@ -955,17 +959,17 @@ int main(int argc, char* argv[])
 
 	//start RX
 	dev_start_rx();
-	dbg_print(0, "RX start\n");
+	time(&rawtime);
+	timeinfo=localtime(&rawtime);
+	dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
+		timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+	dbg_print(TERM_GREEN, " Device start - RX\n");
 
 	//UART comms
 	int8_t rx_bsb_sample=0;
 
 	float f_sample;
 	//FILE *fp=fopen("test.out", "wb");
-
-	//time
-	time_t rawtime;
-    struct tm *timeinfo;
 
 	while(1)
 	{
@@ -1059,7 +1063,7 @@ int main(int argc, char* argv[])
 
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
-				dbg_print(0, "[%02d:%02d:%02d]",
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, " RF LSF:");
 
@@ -1189,7 +1193,7 @@ int main(int argc, char* argv[])
 
 								time(&rawtime);
 								timeinfo=localtime(&rawtime);
-								dbg_print(0, "[%02d:%02d:%02d] ",
+								dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d] ",
 									timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 								dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
 									call_dst, call_src, can);
@@ -1216,7 +1220,7 @@ int main(int argc, char* argv[])
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
 
-					dbg_print(0, "[%02d:%02d:%02d]",
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					dbg_print(TERM_YELLOW, " RF FRM: ");
 					dbg_print(TERM_YELLOW, " FN:%04X | LICH_CNT:%d", fn, lich_cnt);
@@ -1441,8 +1445,9 @@ int main(int argc, char* argv[])
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
 
-					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream TX end\n",
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_GREEN, " Stream TX end\n");
 					usleep(10*40000U); //wait 400ms (10 M17 frames)
 					
 					//disable TX
@@ -1452,15 +1457,15 @@ int main(int argc, char* argv[])
 					dev_start_rx();
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
-					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_GREEN, " RX start\n");
 
 					tx_state=TX_IDLE;
 				}
 			}
 
 			//M17 packet data - "Packet Mode IP Packet"
-			//TODO: WIP packet mode
 			else if(strstr((char*)rx_buff, "M17P")==(char*)rx_buff)
 			{
 				time(&rawtime);
@@ -1505,8 +1510,9 @@ int main(int argc, char* argv[])
 				
 				time(&rawtime);
 				timeinfo=localtime(&rawtime);
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] PKT TX start\n",
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_GREEN, " PKT TX start\n");
 
 				//stop RX, set PA_EN=1 and initialize TX
 				dev_stop_rx();
@@ -1570,8 +1576,9 @@ int main(int argc, char* argv[])
 				time(&rawtime);
 				timeinfo=localtime(&rawtime);
 
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] PKT TX end\n",
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_GREEN, " PKT TX end\n");
 				usleep(10*40000U); //wait 400ms (10 M17 frames)
 				
 				//disable TX
@@ -1581,8 +1588,9 @@ int main(int argc, char* argv[])
 				dev_start_rx();
 				time(&rawtime);
 				timeinfo=localtime(&rawtime);
-				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				dbg_print(TERM_GREEN, " RX start\n");
 			}
 
 			//clear the rx_buff
@@ -1595,8 +1603,9 @@ int main(int argc, char* argv[])
 			time(&rawtime);
     		timeinfo=localtime(&rawtime);
 
-			dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] TX timeout\n",
+			dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 				timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+			dbg_print(TERM_GREEN, " TX timeout\n");
 			//usleep(10*40000U); //wait 400ms (10 M17 frames)
 			
 			//disable TX
@@ -1606,8 +1615,9 @@ int main(int argc, char* argv[])
 			dev_start_rx();
 			time(&rawtime);
     		timeinfo=localtime(&rawtime);
-			dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+			dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 				timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+			dbg_print(TERM_GREEN, " RX start\n");
 
 			tx_state=TX_IDLE;
 		}
