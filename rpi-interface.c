@@ -720,6 +720,38 @@ void sigint_handler(int val)
 	exit(0);
 }
 
+//samples per symbol (sps) = 5
+void filter_symbols(int8_t out[SYM_PER_FRA*5], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
+{
+	#define FLT_LEN 41
+	static int8_t last[FLT_LEN]; //memory for last symbols
+
+	for(uint8_t i=0; i<SYM_PER_FRA; i++)
+	{
+		for(uint8_t j=0; j<5; j++)
+		{
+			for(uint8_t k=0; k<FLT_LEN-1; k++)
+				last[k]=last[k+1];
+
+			if(j==0)
+			{
+				if(phase_inv) //optional phase inversion
+					last[FLT_LEN-1]=-in[i];
+				else
+					last[FLT_LEN-1]= in[i];
+			}
+			else
+				last[FLT_LEN-1]=0;
+
+			float acc=0.0f;
+			for(uint8_t k=0; k<FLT_LEN; k++)
+				acc+=last[k]*flt[k];
+
+			out[i*5+j]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
+		}
+	}
+}
+
 int main(int argc, char* argv[])
 {
 	signal(SIGINT, sigint_handler);
@@ -1263,10 +1295,8 @@ int main(int argc, char* argv[])
 				static uint8_t src_call[10]={0};
 				memcpy(m17stream.pld, &rx_buff[(32+16+224+16)/8U], 128/8);
 
-				float frame_symbols[SYM_PER_FRA];	//raw frame symbols
-				uint32_t frame_buff_cnt;			//buffer counter
-				int8_t samples[SYM_PER_FRA*5];		//samples=symbols*sps
-				static float flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + SYM_PER_FRA*5]; //lookback samples plus a whole frame
+				int8_t frame_symbols[SYM_PER_FRA];	//raw frame symbols
+				int8_t bsb_samples[SYM_PER_FRA*5];	//filtered baseband samples = symbols*sps
 
 				if(tx_state==TX_IDLE) //first received frame
 				{
@@ -1334,115 +1364,43 @@ int main(int argc, char* argv[])
 					gpio_set(config.pa_en, 1);
 					dev_start_tx();
 					usleep(10*1000U);
+
+					//flush the RRC baseband filter
+					int8_t flush[SYM_PER_FRA]={0};
+					filter_symbols(NULL, flush, rrc_taps_5, 0);
 				
 					//generate frame symbols, filter them and send out to the device
 					//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
 					//let's start with the preamble
-					frame_buff_cnt=0;
-					gen_preamble(frame_symbols, &frame_buff_cnt, PREAM_LSF);
+					uint32_t frame_buff_cnt=0;
+					gen_preamble_i8(frame_symbols, &frame_buff_cnt, PREAM_LSF);
 
 					//filter and send out to the device
-					memset((uint8_t*)&flt_buff[0], 0U, sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 
 					//now the LSF
-					gen_frame(frame_symbols, NULL, FRAME_LSF, &(m17stream.lsf), 0, 0);
+					gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &(m17stream.lsf), 0, 0);
 
 					//filter and send out to the device
-					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 
 					//finally, the first frame
-					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
 
 					//filter and send out to the device
-					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 				}
 				else
 				{
 					//only one frame is needed
-					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
 
 					//filter and send out to the device
-					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 				}
 
 				time(&rawtime);
@@ -1460,57 +1418,19 @@ int main(int argc, char* argv[])
 				{
 					//two frames need to be sent - last stream frame and EOT marker
 					//last frame
-					gen_frame(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
+					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
 
 					//filter and send out to the device
-					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 
 					//now the final EOT marker
-					frame_buff_cnt=0;
-					gen_eot(frame_symbols, &frame_buff_cnt);
+					uint32_t frame_buff_cnt=0;
+					gen_eot_i8(frame_symbols, &frame_buff_cnt);
 
 					//filter and send out to the device
-					memcpy((uint8_t*)&flt_buff[0], (uint8_t*)&flt_buff[sizeof(flt_buff)/sizeof(float)-(sizeof(rrc_taps_5)/sizeof(float)-1)], sizeof(rrc_taps_5)-sizeof(float)); //lookback
-					for(uint16_t i=0; i<SYM_PER_FRA; i++)
-					{
-						for(uint8_t j=0; j<5; j++) //upsample
-						{
-							if(j==0)
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i]=(float)frame_symbols[i];
-							else
-								flt_buff[sizeof(rrc_taps_5)/sizeof(float)-1 + 5*i+j]=0.0f;
-						}
-					}
-					for(uint16_t i=0; i<sizeof(samples); i++)
-					{
-						float acc=0.0f;
-						for(uint16_t j=0; j<sizeof(rrc_taps_5)/sizeof(float); j++)
-						{
-							acc+=flt_buff[i+j]*rrc_taps_5[j];
-						}
-						samples[i]=acc*TX_SYMBOL_SCALING_COEFF*sqrtf(5.0f); //crank up the gain
-					}
-					write(fd, (uint8_t*)samples, sizeof(samples));
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
@@ -1556,6 +1476,9 @@ int main(int argc, char* argv[])
 				dbg_print(TERM_DEFAULT, " └ "); dbg_print(TERM_YELLOW, "TYPE: "); dbg_print(TERM_DEFAULT, "%d\n", type); //assuming 1-byte type specifier
 
 				//TODO: handle TX here
+				//int8_t frame_symbols[SYM_PER_FRA];	//raw frame symbols
+				//int8_t bsb_samples[SYM_PER_FRA*5];	//filtered baseband samples = symbols*sps
+
 				;
 			}
 		}
