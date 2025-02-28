@@ -1288,7 +1288,6 @@ int main(int argc, char* argv[])
 				sprintf((char*)tx_buff, "PONGxxxxxx"); //that "xxxxxx" is just a placeholder
 				memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
 				refl_send(tx_buff, 4+6); //PONG
-				memset((uint8_t*)rx_buff, 0, rx_len);
 				//dbg_print(TERM_YELLOW, "PING\n");
 			}
 
@@ -1442,7 +1441,7 @@ int main(int argc, char* argv[])
 					time(&rawtime);
     				timeinfo=localtime(&rawtime);
 
-					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream end\n",
+					dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] Stream TX end\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					usleep(10*40000U); //wait 400ms (10 M17 frames)
 					
@@ -1458,8 +1457,6 @@ int main(int argc, char* argv[])
 
 					tx_state=TX_IDLE;
 				}
-
-				memset((uint8_t*)rx_buff, 0, rx_len);
 			}
 
 			//M17 packet data - "Packet Mode IP Packet"
@@ -1469,7 +1466,7 @@ int main(int argc, char* argv[])
 				time(&rawtime);
 				timeinfo=localtime(&rawtime);
 				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-				dbg_print(TERM_GREEN, " M17 packet received over the Internet\n");
+				dbg_print(TERM_GREEN, " M17 Inet packet received\n");
 
 				uint8_t call_dst[10], call_src[10], can, type;
 				decode_callsign_bytes(call_dst, &rx_buff[4+0]);
@@ -1480,14 +1477,95 @@ int main(int argc, char* argv[])
 				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "DST: "); dbg_print(TERM_DEFAULT, "%s\n", call_dst);
 				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "SRC: "); dbg_print(TERM_DEFAULT, "%s\n", call_src);
 				dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "CAN: "); dbg_print(TERM_DEFAULT, "%d\n", can);
-				dbg_print(TERM_DEFAULT, " └ "); dbg_print(TERM_YELLOW, "TYPE: "); dbg_print(TERM_DEFAULT, "%d\n", type); //assuming 1-byte type specifier
+				if(type!=5) //assuming 1-byte type specifier
+				{
+					dbg_print(TERM_DEFAULT, " └ "); dbg_print(TERM_YELLOW, "TYPE: "); dbg_print(TERM_DEFAULT, "%d\n", type);
+				}
+				else
+				{
+					dbg_print(TERM_DEFAULT, " ├ "); dbg_print(TERM_YELLOW, "TYPE: "); dbg_print(TERM_DEFAULT, "SMS\n");
+					dbg_print(TERM_DEFAULT, " └ "); dbg_print(TERM_YELLOW, "MSG: "); dbg_print(TERM_DEFAULT, "%s\n", &rx_buff[4+240/8+1]);
+				}
 
 				//TODO: handle TX here
-				//int8_t frame_symbols[SYM_PER_FRA];	//raw frame symbols
-				//int8_t bsb_samples[SYM_PER_FRA*5];	//filtered baseband samples = symbols*sps
+				int8_t frame_symbols[SYM_PER_FRA];	//raw frame symbols
+				int8_t bsb_samples[SYM_PER_FRA*5];	//filtered baseband samples = symbols*sps
 
-				;
+				//log to file
+				FILE* logfile=fopen((char*)config.log_path, "awb");
+				if(logfile!=NULL)
+				{
+					time(&rawtime);
+					timeinfo=localtime(&rawtime);
+					fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
+						call_src, call_dst);
+					fclose(logfile);
+				}
+				
+				time(&rawtime);
+				timeinfo=localtime(&rawtime);
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] PKT TX start\n",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+				//stop RX, set PA_EN=1 and initialize TX
+				dev_stop_rx();
+				usleep(2*1000U);
+				gpio_set(config.pa_en, 1);
+				dev_start_tx();
+				usleep(10*1000U);
+				
+				//flush the RRC baseband filter
+				filter_symbols(NULL, NULL, NULL, 0);
+				
+				//generate frame symbols, filter them and send out to the device
+				//we need to prepare 3 frames to begin the transmission - preamble, LSF and stream frame 0
+				//let's start with the preamble
+				uint32_t frame_buff_cnt=0;
+				gen_preamble_i8(frame_symbols, &frame_buff_cnt, PREAM_LSF);
+				
+				//filter and send out to the device
+				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+				write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
+				
+				//now the LSF
+				gen_frame_i8(frame_symbols, NULL, FRAME_LSF, (lsf_t*)&rx_buff[4], 0, 0);
+				
+				//filter and send out to the device
+				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+				write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
+				
+				//TODO: frames
+				//gen_frame_i8(frame_symbols, payload, FRAME_PKT, NULL, 0, 0);
+
+				//now the final EOT marker
+				frame_buff_cnt=0;
+				gen_eot_i8(frame_symbols, &frame_buff_cnt);
+
+				//filter and send out to the device
+				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+				write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
+
+				time(&rawtime);
+				timeinfo=localtime(&rawtime);
+
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] PKT TX end\n",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+				usleep(10*40000U); //wait 400ms (10 M17 frames)
+				
+				//disable TX
+				gpio_set(config.pa_en, 0);
+
+				//restart RX
+				dev_start_rx();
+				time(&rawtime);
+				timeinfo=localtime(&rawtime);
+				dbg_print(TERM_YELLOW, "[%02d:%02d:%02d] RX start\n",
+					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 			}
+
+			//clear the rx_buff
+			memset((uint8_t*)rx_buff, 0, rx_len);
 		}
 
 		//tx timeout
