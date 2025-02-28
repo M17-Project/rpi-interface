@@ -1535,8 +1535,29 @@ int main(int argc, char* argv[])
 				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
 				write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 				
-				//TODO: frames
-				//gen_frame_i8(frame_symbols, payload, FRAME_PKT, NULL, 0, 0);
+				//packet frames
+				uint16_t pld_len=rx_len-(4+240/8); //"M17P" plus 240-bit LSD
+				uint8_t frame=0;
+				uint8_t pld[26];
+				
+				while(pld_len>25)
+				{
+					memcpy(pld, &rx_buff[4+240/8+frame*25], 25);
+					pld[25]=frame<<2;
+					gen_frame_i8(frame_symbols, pld, FRAME_PKT, NULL, 0, 0);
+					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
+					pld_len-=25;
+					frame++;
+					usleep(40*1000U);
+				}
+				memset(pld, 0, 26);
+				memcpy(pld, &rx_buff[4+240/8+frame*25], pld_len);
+				pld[25]=(1<<7)|(pld_len<<2); //EoT flag set, amount of remaining data in the 'frame number' field
+				gen_frame_i8(frame_symbols, pld, FRAME_PKT, NULL, 0, 0);
+				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
+				write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
+				usleep(40*1000U);
 
 				//now the final EOT marker
 				frame_buff_cnt=0;
