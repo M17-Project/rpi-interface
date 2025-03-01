@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- *  Edited on: Feb 23, 2025
+ *  Edited on: Mar 1, 2025
  *     Author: Wojciech Kaczmarski, SP5WWP
  *             M17 Foundation
  */
@@ -84,7 +84,7 @@ struct config_t
 	uint32_t tx_freq;
 	uint8_t afc;
 	//GPIO
-	uint16_t pa_en;
+	uint16_t pa_en; //TODO: remove, it's not used
 	uint16_t boot0;
 	uint16_t nrst;
 } config;
@@ -135,7 +135,7 @@ uint32_t tx_timer=0;
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
 {
-	char str[200];
+	char str[1000]; //1k chars is probably an overkill, but - oh well :)
 	va_list ap;
 
 	va_start(ap, fmt);
