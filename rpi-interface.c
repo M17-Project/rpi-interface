@@ -122,7 +122,7 @@ int8_t lsf_sync_ext[16];					//extended LSF syncword
 lsf_t lsf; 									//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
 uint16_t fn, last_fn=0xFFFFU;				//current and last received FN
-uint8_t lsf_b[30+1];						//raw decoded LSF (including 1 flushing byte)
+uint8_t lsf_b[30];							//raw decoded LSF
 uint8_t first_frame=1;						//first decoded frame after SYNC?
 uint8_t lich_parts=0;						//LICH chunks received (bit flags)
 uint8_t got_lsf=0;							//got LSF? either from LSF or reconstructed from LICH
@@ -760,6 +760,75 @@ void filter_symbols(int8_t out[SYM_PER_FRA*5], const int8_t in[SYM_PER_FRA], con
 	}
 }
 
+//M17
+/**
+ * @brief Decode the Link Setup Frame from a symbol stream.
+ *
+ * @param lsf Pointer to an LSF struct.
+ * @param pld_symbs Input 184 symbols represented as floats: {-3, -1, +1, +3}.
+ * @return uint32_t Viterbi metric for the payload.
+ */
+uint32_t decode_LSF(lsf_t *lsf, const float pld_symbs[SYM_PER_PLD])
+{
+	uint8_t lsf_b[30+1];
+	uint16_t soft_bit[2*SYM_PER_PLD];
+	uint16_t d_soft_bit[2*SYM_PER_PLD];
+	uint32_t e;
+
+	slice_symbols(soft_bit, pld_symbs);
+	randomize_soft_bits(soft_bit);
+	reorder_soft_bits(d_soft_bit, soft_bit);
+
+	e = viterbi_decode_punctured(lsf_b, d_soft_bit, puncture_pattern_1, 2*SYM_PER_PLD, sizeof(puncture_pattern_1));
+
+	//copy over the data starting at byte 1 (byte 0 needs to be omitted)
+	memcpy(lsf->dst, &lsf_b[1+0], 6);		//DST field
+	memcpy(lsf->src, &lsf_b[1+6], 6);		//SRC field
+	lsf->type[0]=lsf_b[1+13];				//TYPE field
+	lsf->type[1]=lsf_b[1+12];
+	memcpy(lsf->meta, &lsf_b[1+14], 14);	//META field
+	lsf->crc[0]=lsf_b[1+29];				//CRC field
+	lsf->crc[1]=lsf_b[1+28];
+
+	return e; //return Viterbi error metric
+}
+
+/**
+ * @brief Decode a single Stream Frame from a symbol stream.
+ *
+ * @param frame_data Pointer to a 16-byte array for the decoded payload.
+ * @param lich[6] Pointer to a 6-byte array for the decoded LICH chunk.
+ * @param fn Pointer to a uint16_t variable for the Frame Number.
+ * @param lich_cnt Pointer to a uint8_t variable for the LICH Counter.
+ * @param pld_symbs Input 184 symbols represented as floats: {-3, -1, +1, +3}.
+ * @return uint32_t Viterbi metric for the payload.
+ */
+uint32_t decode_StrFrame(uint8_t frame_data[128/8], uint8_t lich[6], uint16_t *fn, uint8_t *lich_cnt, const float pld_symbs[SYM_PER_PLD])
+{
+	uint16_t soft_bit[2*SYM_PER_PLD];
+	uint16_t d_soft_bit[2*SYM_PER_PLD];
+	uint8_t tmp_frame_data[(16+128)/8+1]; //1 byte extra for flushing
+	uint32_t e;
+
+	slice_symbols(soft_bit, pld_symbs);
+	randomize_soft_bits(soft_bit);
+	reorder_soft_bits(d_soft_bit, soft_bit);
+
+	//decode LICH
+	decode_LICH(lich, d_soft_bit);
+	*lich_cnt = lich[5]>>5;
+
+	e = viterbi_decode_punctured(tmp_frame_data, &d_soft_bit[96], puncture_pattern_2, 2*SYM_PER_PLD-96, sizeof(puncture_pattern_2));
+	
+	//shift 1 position left - get rid of the encoded flushing bits
+	for(uint8_t i=0; i<16; i++)
+		frame_data[i]=tmp_frame_data[i+2+1];
+
+	*fn = (tmp_frame_data[1]<<8)|tmp_frame_data[2];
+
+	return e;
+}
+
 int main(int argc, char* argv[])
 {
 	signal(SIGINT, sigint_handler);
@@ -1034,27 +1103,13 @@ int main(int argc, char* argv[])
 				}
 
 				float pld[SYM_PER_PLD];
-				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
 
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
 					pld[i]=f_flt_buff[16*5+i*5+sample_offset]; //add symbol timing correction
 				}
 
-				slice_symbols(soft_bit, pld);
-				randomize_soft_bits(soft_bit);
-				reorder_soft_bits(d_soft_bit, soft_bit);
-				uint32_t e=viterbi_decode_punctured(lsf_b, d_soft_bit, puncture_pattern_1, 2*SYM_PER_PLD, sizeof(puncture_pattern_1));
-				//shift the buffer 1 position left - get rid of the encoded flushing bits
-                for(uint8_t i=0; i<30; i++)
-                    lsf_b[i]=lsf_b[i+1];
-
-				//copy SRC and DST as-is, big-endian
-				memcpy(lsf.dst, &lsf_b[0], 6);
-				memcpy(lsf.src, &lsf_b[6], 6);
-
-				lsf.type[0]=lsf_b[13];
-				lsf.type[1]=lsf_b[12];
+				uint32_t e = decode_LSF(&lsf, pld);
 
 				uint8_t call_dst[10], call_src[10], can;
 				decode_callsign_bytes(call_dst, lsf.dst);
@@ -1067,7 +1122,7 @@ int main(int argc, char* argv[])
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, " RF LSF:");
 
-				if(!CRC_M17(lsf_b, 30)) //if CRC valid
+				if(LSF_CRC(&lsf)==*((uint16_t*)lsf.crc)) //if CRC valid
 				{
 					got_lsf=1;
 					rx_state=RX_SYNCD;	//change RX state
@@ -1081,7 +1136,7 @@ int main(int argc, char* argv[])
 					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
 					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
 					*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
-					memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
+					memcpy(&refl_pld[6], &lsf, 224/8);							//LSD
 					*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
 					memset(&refl_pld[36], 0, 128/8);							//payload (zeros, because this is LSF)
 					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
@@ -1136,34 +1191,16 @@ int main(int argc, char* argv[])
 				}
 
 				float pld[SYM_PER_PLD];
-				uint16_t soft_bit[2*SYM_PER_PLD], d_soft_bit[2*SYM_PER_PLD];
-				uint8_t frame_data[(16+128)/8+1]; //1 byte extra for flushing
-
+				
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
 					pld[i]=f_flt_buff[16*5+i*5+sample_offset];
 				}
 
-				slice_symbols(soft_bit, pld);
-				randomize_soft_bits(soft_bit);
-				reorder_soft_bits(d_soft_bit, soft_bit);
-
-				//decode LICH
 				uint8_t lich[6];
-				decode_LICH(lich, d_soft_bit);
-                uint8_t lich_cnt=lich[5]>>5;
-
-				uint16_t enc_data[272];
-				for(uint16_t i=0; i<272; i++)
-                {
-                    enc_data[i]=d_soft_bit[96+i];
-                }
-
-				uint32_t e=viterbi_decode_punctured(frame_data, enc_data, puncture_pattern_2, 2*SYM_PER_PLD-96, sizeof(puncture_pattern_2));
-				//shift the buffer 1 position left - get rid of the encoded flushing bits
-                for(uint8_t i=0; i<19-1; i++)
-                    frame_data[i]=frame_data[i+1];
-				fn=(frame_data[0]<<8)|frame_data[1];
+				uint8_t lich_cnt;
+				uint8_t frame_data[128/8];
+				uint32_t e = decode_StrFrame(frame_data, lich, &fn, &lich_cnt, pld);
 				
 				//set the last FN number to FN-1 if this is a late-join and the frame data is valid
 				if(first_frame==1 && (fn%6)==lich_cnt)
@@ -1186,7 +1223,8 @@ int main(int argc, char* argv[])
 								m17stream.sid=rand()%0x10000U;
 
 								uint8_t call_dst[12]={0}, call_src[12]={0};
-								uint8_t can=(*((uint16_t*)&lsf_b[12])>>7)&0xF;
+								uint16_t type=((uint16_t)lsf_b[12]<<8)|lsf_b[13];
+								uint8_t can=(type>>7)&0xF;
 
 								decode_callsign_bytes(call_dst, &lsf_b[0]);
 								decode_callsign_bytes(call_src, &lsf_b[6]);
@@ -1195,8 +1233,8 @@ int main(int argc, char* argv[])
 								timeinfo=localtime(&rawtime);
 								dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d] ",
 									timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-								dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | CAN: %02d\n",
-									call_dst, call_src, can);
+								dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d)\n",
+									call_dst, call_src, type, can);
 
 								FILE* logfile=fopen((char*)config.log_path, "awb");
 								if(logfile!=NULL)
@@ -1236,9 +1274,9 @@ int main(int argc, char* argv[])
 						uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
 						sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
 						*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
-						memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSF
+						memcpy(&refl_pld[6], &lsf_b[0], 224/8);						//LSD
 						*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
-						memcpy(&refl_pld[36], &frame_data[2], 128/8);				//payload (zeros)
+						memcpy(&refl_pld[36], frame_data, 128/8);					//payload
 						uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
 						*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
 						refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
