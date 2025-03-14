@@ -1025,12 +1025,16 @@ int main(int argc, char* argv[])
 				uint8_t sample_offset=0;
 				for(uint8_t i=1; i<=2; i++)
 				{
-					for(uint8_t j=0; j<15; j++)
+					for(uint8_t j=0; j<16; j++)
 						symbols[j]=f_flt_buff[j*5+i];
-					symbols[15]=f_flt_buff[15*5+i];
-					float tmp=eucl_norm(&symbols[0], lsf_sync_ext, 16);
-					if(tmp<dist_lsf)
+
+					float d=eucl_norm(symbols, lsf_sync_ext, 16);
+
+					if(d<dist_lsf)
+					{
+						dist_lsf=d;
 						sample_offset=i;
+					}
 				}
 
 				float pld[SYM_PER_PLD];
@@ -1043,9 +1047,12 @@ int main(int argc, char* argv[])
 				uint32_t e = decode_LSF(&lsf, pld);
 
 				uint8_t call_dst[10], call_src[10], can;
+				uint16_t type, crc;
 				decode_callsign_bytes(call_dst, lsf.dst);
                 decode_callsign_bytes(call_src, lsf.src);
-				can=(*((uint16_t*)lsf.type)>>7)&0xFU;
+				type=((uint16_t)lsf.type[0]<<8|lsf.type[1]);
+				can=(type>>7)&0xFU;
+				crc=(((uint16_t)lsf.crc[0]<<8)|lsf.crc[1]);
 
 				time(&rawtime);
     			timeinfo=localtime(&rawtime);
@@ -1053,7 +1060,7 @@ int main(int argc, char* argv[])
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 				dbg_print(TERM_YELLOW, " RF LSF:");
 
-				if(LSF_CRC(&lsf)==*((uint16_t*)lsf.crc)) //if CRC valid
+				if(LSF_CRC(&lsf)==crc) //if CRC valid
 				{
 					got_lsf=1;
 					rx_state=RX_SYNCD;	//change RX state
@@ -1078,7 +1085,7 @@ int main(int argc, char* argv[])
 					{
 						dbg_print(TERM_GREEN, " CRC OK ");
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
-							call_dst, call_src, *((uint16_t*)lsf.type), can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+							call_dst, call_src, type, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 
 						FILE* logfile=fopen((char*)config.log_path, "awb");
 						if(logfile!=NULL)
@@ -1108,17 +1115,22 @@ int main(int argc, char* argv[])
 				uint8_t sample_offset=0;
 				for(uint8_t i=1; i<=2; i++)
 				{
-					for(uint8_t j=0; j<15; j++)
+					for(uint8_t j=0; j<16; j++)
 						symbols[j]=f_flt_buff[j*5+i];
-					symbols[15]=f_flt_buff[15*5+i];
+					
 					float tmp_a=eucl_norm(&symbols[8], str_sync_symbols, 8);
-					for(uint8_t j=0; j<15; j++)
+					for(uint8_t j=0; j<16; j++)
 						symbols[j]=f_flt_buff[960+j*5+i];
-					symbols[15]=f_flt_buff[960+15*5+i];
+					
 					float tmp_b=eucl_norm(&symbols[8], str_sync_symbols, 8);
 
-					if(sqrtf(tmp_a*tmp_a+tmp_b*tmp_b)<dist_str)
+					float d=sqrtf(tmp_a*tmp_a+tmp_b*tmp_b);
+
+					if(d<dist_str)
+					{
+						dist_str=d;
 						sample_offset=i;
+					}
 				}
 
 				float pld[SYM_PER_PLD];
@@ -1220,15 +1232,38 @@ int main(int argc, char* argv[])
 			}
 
 			//TODO: handle packet mode reception over RF
-			else if(dist_pkt<=2.0f)
+			/*else if(dist_pkt<=5.0f && rx_state==RX_SYNCD)
 			{
-				/*time(&rawtime);
+				//find L2's minimum
+				uint8_t sample_offset=0;
+				for(uint8_t i=1; i<=2; i++)
+				{
+					for(uint8_t j=0; j<8; j++)
+						symbols[j]=f_flt_buff[j*5+i];
+						
+					float d=eucl_norm(symbols, pkt_sync_symbols, 8);
+					
+					if(d<dist_pkt)
+					{
+						dist_pkt=d;
+						sample_offset=i;
+					}
+				}
+
+				float pld[SYM_PER_PLD];
+				
+				for(uint16_t i=0; i<SYM_PER_PLD; i++)
+				{
+					pld[i]=f_flt_buff[16*5+i*5+sample_offset];
+				}
+
+				time(&rawtime);
 				timeinfo=localtime(&rawtime);
 
-				dbg_print(0, "[%02d:%02d:%02d]",
+				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-				dbg_print(TERM_YELLOW, " RF PKT?\n");*/
-			}
+				dbg_print(TERM_YELLOW, " RF PKT?\n");
+			}*/
 			
 			//RX sync timeout
 			if(rx_state==RX_SYNCD)
