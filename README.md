@@ -15,3 +15,7 @@ The `-c` argument followed by a path to the config text file is mandatory.
 ### Config file structure
 A sample config file is provided - `default_cfg.txt`.
 "PA_EN" pin is not used by the CC1200 HAT (set it to any unused pin).
+
+### UART access
+The device uses `/dev/ttyAMA0` which is available through `miniuart-bt` overlay. On a Raspberry Pi Zero 2,
+use `sudo nano /boot/firmware/config.txt` and add `btoverlay=miniuart-bt` line.
