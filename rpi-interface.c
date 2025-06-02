@@ -235,10 +235,10 @@ int get_baud(uint32_t baud)
 int set_interface_attribs(int fd, uint32_t speed, int parity)
 {
 	struct termios tty;
-	if (tcgetattr (fd, &tty) != 0)
+	if(tcgetattr(fd, &tty) != 0)
 	{
-		//error_message ("error %d from tcgetattr", errno);
-		return -1;
+		dbg_print(TERM_YELLOW, " Error from tcgetattr\n");
+		exit(1);
  	}
 
 	cfsetospeed(&tty, get_baud(speed));
@@ -266,7 +266,7 @@ int set_interface_attribs(int fd, uint32_t speed, int parity)
 	if(tcsetattr(fd, TCSANOW, &tty)!=0)
 	{		
 		dbg_print(TERM_RED, " Error from tcsetattr\n");
-		return -1;
+		exit(1); 
 	}
 	
 	return 0;
@@ -279,7 +279,7 @@ void set_blocking(int fd, int should_block)
 	if(tcgetattr(fd, &tty)!=0)
 	{
 		dbg_print(TERM_YELLOW, " Error from tggetattr\n");
-		return;
+		exit(1);
 	}
 
 	tty.c_cc[VMIN]  = should_block ? 1 : 0;
@@ -288,6 +288,7 @@ void set_blocking(int fd, int should_block)
 	if(tcsetattr(fd, TCSANOW, &tty)!=0)
 	{
 		dbg_print(TERM_YELLOW, " Error setting UART attributes\n");
+		exit(1);
 	}
 }
 
@@ -465,7 +466,7 @@ void gpio_init(const char *program_name)
 	// Open the GPIO chip
 	config.gpio_chip = gpiod_chip_open_by_name("gpiochip0"); // Assuming gpiochip0, might need to be configurable
 	if (!config.gpio_chip) {
-		dbg_print(TERM_RED, "Error opening GPIO chip\n");
+		dbg_print(TERM_RED, "\nError opening GPIO chip\n");
 		// No need to call gpio_cleanup as nothing was allocated yet
 		exit(1);
 	}
@@ -473,21 +474,21 @@ void gpio_init(const char *program_name)
 	// Get the lines
 	config.pa_en_line = gpiod_chip_get_line(config.gpio_chip, config.pa_en);
 	if (!config.pa_en_line) {
-		dbg_print(TERM_RED, "Error getting PA_EN line (GPIO%d)\n", config.pa_en);
+		dbg_print(TERM_RED, "\nError getting PA_EN line (GPIO%d)\n", config.pa_en);
 		gpio_cleanup();
 		exit(1);
 	}
 	
 	config.boot0_line = gpiod_chip_get_line(config.gpio_chip, config.boot0);
 	if (!config.boot0_line) {
-		dbg_print(TERM_RED, "Error getting BOOT0 line (GPIO%d)\n", config.boot0);
+		dbg_print(TERM_RED, "\nError getting BOOT0 line (GPIO%d)\n", config.boot0);
 		gpio_cleanup();
 		exit(1);
 	}
 	
 	config.nrst_line = gpiod_chip_get_line(config.gpio_chip, config.nrst);
 	if (!config.nrst_line) {
-		dbg_print(TERM_RED, "Error getting nRST line (GPIO%d)\n", config.nrst);
+		dbg_print(TERM_RED, "\nError getting nRST line (GPIO%d)\n", config.nrst);
 		gpio_cleanup();
 		exit(1);
 	}
@@ -495,21 +496,21 @@ void gpio_init(const char *program_name)
 	// Request lines as outputs, initially low
 	ret = gpiod_line_request_output(config.pa_en_line, program_name, 0);
 	if (ret < 0) {
-		dbg_print(TERM_RED, "Error requesting PA_EN line %d as output\n", config.pa_en);
+		dbg_print(TERM_RED, "\nError requesting PA_EN line %d as output\n", config.pa_en);
 		gpio_cleanup();
 		exit(1);
 	}
 	
 	ret = gpiod_line_request_output(config.boot0_line, program_name, 0);
 	if (ret < 0) {
-		dbg_print(TERM_RED, "Error requesting BOOT0 line %d as output\n", config.boot0);
+		dbg_print(TERM_RED, "\nError requesting BOOT0 line %d as output\n", config.boot0);
 		gpio_cleanup();
 		exit(1);
 	}
 	
 	ret = gpiod_line_request_output(config.nrst_line, program_name, 0);
 	if (ret < 0) {
-		dbg_print(TERM_RED, "Error requesting nRST line %d as output\n", config.nrst);
+		dbg_print(TERM_RED, "\nError requesting nRST line %d as output\n", config.nrst);
 		gpio_cleanup();
 		exit(1);
 	}
@@ -876,6 +877,7 @@ int main(int argc, char* argv[])
 	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
 
 	//check write access to the log file
+	//TODO: make logging optional
 	FILE* logfile=fopen((char*)config.log_path, "awb");
 	if(logfile!=NULL)
 	{
