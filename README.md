@@ -1,10 +1,13 @@
 # rpi-interface
 Raspberry Pi interface for the M17 Project's [CC1200 HAT](https://github.com/M17-Project/CC1200_HAT-hw).
 
+### Building
+To build the code using `make`, first install *libzmq3-dev* and *libgpiod-dev*:<br>
+`sudo apt install libzmq3-dev libgpiod-dev`
+
 ### Command line arguments
 ```
 -r reset the device
--i IPv4 address of the reflector
 -c path to the configuration file
 ```
 The `-c` argument followed by a path to the config text file is mandatory.

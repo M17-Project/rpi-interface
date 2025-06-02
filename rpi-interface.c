@@ -67,16 +67,16 @@ uint8_t tx_buff[512]={0};
 uint8_t rx_buff[65536]={0};
 int tx_len=0, rx_len=0;
 int socket_byte_count=0; //data available for reading at the socket
-char refl_addr[20]={0}; //reflector's IP address
 
 //config stuff
 struct config_t
 {
-	uint8_t log_path[128];
-	uint8_t uart[64];
+	char log_path[128];
+	char uart[64];
 	uint32_t uart_rate;
-	uint8_t node[10];
-	uint8_t reflector[8]; //TODO: add IP address field
+	char node[10];
+	char refl_addr[20];
+	char reflector[8];
 	uint8_t module;
 	uint8_t enc_node[6];
 	int16_t freq_corr;
@@ -315,15 +315,17 @@ int8_t load_config(struct config_t *cfg, char *path)
 	char line[128];
 
 	//load defaults
-	sprintf((char*)cfg->log_path, "/var/www/html/files/log.txt");
-	sprintf((char*)cfg->uart, "/dev/ttyAMA0");
+	sprintf(cfg->log_path, "/var/www/html/files/log.txt");
+	sprintf(cfg->uart, "/dev/ttyAMA0");
 	cfg->uart_rate=460800;
-	sprintf((char*)cfg->node, "N0CALL H");
+	sprintf(cfg->node, "N0CALL H");
+	sprintf(cfg->refl_addr, "152.70.192.70");
+	sprintf(cfg->reflector, "M17-M17");
 	cfg->module='A';
 	cfg->rx_freq=433475000U;
 	cfg->tx_freq=435000000U;
 	cfg->freq_corr=0;
-	cfg->tx_pwr=37.0f;
+	cfg->tx_pwr=10.0f;
 	cfg->afc=0;
 	cfg->nrst=17;
 	cfg->pa_en=18;
@@ -339,13 +341,13 @@ int8_t load_config(struct config_t *cfg, char *path)
 			if(strstr(line, "log_path")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
-				memcpy((char*)&(cfg->log_path), strstr(line, "\"")+1, len);
+				memcpy(cfg->log_path, strstr(line, "\"")+1, len);
 				cfg->log_path[len]=0;
 			}
 			else if(strstr(line, "device")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
-				memcpy((char*)&(cfg->uart), strstr(line, "\"")+1, len);
+				memcpy(cfg->uart, strstr(line, "\"")+1, len);
 				cfg->uart[len]=0;
 			}
 			else if(strstr(line, "speed")!=NULL)
@@ -355,13 +357,19 @@ int8_t load_config(struct config_t *cfg, char *path)
 			else if(strstr(line, "node")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
-				memcpy((char*)&(cfg->node), strstr(line, "\"")+1, len);
+				memcpy(cfg->node, strstr(line, "\"")+1, len);
 				cfg->node[len]=0;
+			}
+			else if(strstr(line, "ipv4")!=NULL)
+			{
+				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
+				memcpy(cfg->refl_addr, strstr(line, "\"")+1, len);
+				cfg->refl_addr[len]=0;
 			}
 			else if(strstr(line, "refelctor")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
-				memcpy((char*)&(cfg->reflector), strstr(line, "\"")+1, len);
+				memcpy(cfg->reflector, strstr(line, "\"")+1, len);
 				cfg->reflector[len]=0;
 			}
 			else if(strstr(line, "module")!=NULL)
@@ -797,16 +805,11 @@ int main(int argc, char* argv[])
 	uint8_t reset=0;
 	for(uint8_t i=1; i<argc; i++)
 	{
-		if(argv[i][0]=='-')
+		if(argv[i][0]=='-') //TODO: replace this with getopt
 		{
 			if(argv[i][1]=='r') //device reset
 			{
 				reset=1; //reset pending
-			}
-			else if(argv[i][1]=='i') //reflector's address
-			{
-				memcpy(refl_addr, argv[i+1], strlen(argv[i+1]));
-				i++;
 			}
 			else if(argv[i][1]=='c') //config file
 			{
@@ -843,6 +846,13 @@ int main(int argc, char* argv[])
 			dbg_print(TERM_GREEN, " OK\n");
 		
 		return (int)gpio_err;
+	}
+
+	//check if the reflector's address looks valid
+	if(strlen(config.refl_addr)<7)
+	{
+		dbg_print(TERM_RED, "Invalid reflector's IPv4 address\nExiting\n");
+		return 1;
 	}
 
 	//---------------------------config's basic sanity checks--------------------------
@@ -935,11 +945,11 @@ int main(int argc, char* argv[])
 		dbg_print(TERM_YELLOW, "disabled\n");
 
 	//-----------------------------------internet part-----------------------------------
-	dbg_print(0, "Connecting to %s", refl_addr);
+	dbg_print(0, "Connecting to %s", config.refl_addr);
 
 	//server
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_addr.s_addr = inet_addr(refl_addr);
+	serv_addr.sin_addr.s_addr = inet_addr(config.refl_addr);
 	serv_addr.sin_port = htons(PORT);
 
 	//Create a socket
@@ -952,7 +962,7 @@ int main(int argc, char* argv[])
 	memset((char*)&daddr, 0, sizeof(daddr));
 
 	//encode M17 callsign from argv
-	encode_callsign_bytes(config.enc_node, config.node);
+	encode_callsign_bytes(config.enc_node, (uint8_t*)config.node);
 
 	//send "CONN"
 	sprintf((char*)tx_buff, "CONNxxxxxx%c", config.module);
