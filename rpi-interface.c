@@ -39,7 +39,6 @@
 
 #define DEBUG_HALT				while(1)
 
-#define PORT					17000										//should be fine for most of the reflectors TODO: maybe parametrize this?
 #define MAX_UDP_LEN				65535
 #define ZMQ_RX_BUFF_SIZE		960											//how many RX baseband samples do we want to publish over ZMQ at once?
 
@@ -76,6 +75,7 @@ struct config_t
 	uint32_t uart_rate;
 	char node[10];
 	char refl_addr[20];
+	uint16_t port;
 	char reflector[8];
 	uint8_t module;
 	uint8_t enc_node[6];
@@ -321,6 +321,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 	cfg->uart_rate=460800;
 	sprintf(cfg->node, "N0CALL H");
 	sprintf(cfg->refl_addr, "152.70.192.70");
+	cfg->port=17000;
 	sprintf(cfg->reflector, "M17-M17");
 	cfg->module='A';
 	cfg->rx_freq=433475000U;
@@ -367,7 +368,11 @@ int8_t load_config(struct config_t *cfg, char *path)
 				memcpy(cfg->refl_addr, strstr(line, "\"")+1, len);
 				cfg->refl_addr[len]=0;
 			}
-			else if(strstr(line, "refelctor")!=NULL)
+			else if(strstr(line, "port")!=NULL)
+			{
+				cfg->port=atoi(strstr(line, "=")+1);
+			}
+			else if(strstr(line, "reflector")!=NULL)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->reflector, strstr(line, "\"")+1, len);
@@ -952,7 +957,7 @@ int main(int argc, char* argv[])
 	//server
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = inet_addr(config.refl_addr);
-	serv_addr.sin_port = htons(PORT);
+	serv_addr.sin_port = htons(config.port);
 
 	//Create a socket
 	sockt = socket(AF_INET, SOCK_DGRAM, 0);
