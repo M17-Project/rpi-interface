@@ -7,9 +7,9 @@ ipv4="152.70.192.70"                    #reflector's IPv4 address
 port=17000                              #reflector's port
 reflector="M17-M17"                     #reflector name
 module="A"                              #module, single letter
-nrst=17                                 #nRST pin
+nrst=21                                 #nRST pin
 pa_en=18                                #PA enable pin (unused by the CC1200 HAT)
-boot0=27                                #BOOT0 pin
+boot0=20                                #BOOT0 pin
 
 #RF settings
 tx_freq=435000000   #Hz
