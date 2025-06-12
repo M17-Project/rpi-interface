@@ -34,7 +34,8 @@
 #include "interface_cmds.h"
 
 //libm17
-#include "libm17/m17.h"
+#include <m17.h>
+
 #include "term.h" //colored terminal font
 
 #define DEBUG_HALT				while(1)
