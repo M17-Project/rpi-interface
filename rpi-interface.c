@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- *  Edited on: Mar 1, 2025
+ *  Edited on: Jun 13, 2025
  *     Author: Wojciech Kaczmarski, SP5WWP
  *             M17 Foundation
  */
@@ -1006,7 +1006,9 @@ int main(int argc, char* argv[])
 	int8_t rx_bsb_sample=0;
 
 	float f_sample;
-	//FILE *fp=fopen("test.out", "wb");
+
+	//file for debug data dumping
+	//FILE *fp=fopen("test_dump.bin", "wb");
 
 	while(1)
 	{
@@ -1040,18 +1042,16 @@ int main(int argc, char* argv[])
 
 			//L2 norm check against syncword
 			float symbols[16];
-			for(uint8_t i=0; i<15; i++)
+			for(uint8_t i=0; i<16; i++)
 				symbols[i]=f_flt_buff[i*5];
-			symbols[15]=f_flt_buff[15*5];
 
 			float dist_lsf=eucl_norm(&symbols[0], lsf_sync_ext, 16); //check against extended LSF syncword (8 symbols, alternating -3/+3)
+			float dist_pkt=eucl_norm(&symbols[0], pkt_sync_symbols, 8);
 			float dist_str_a=eucl_norm(&symbols[8], str_sync_symbols, 8);
-			for(uint8_t i=0; i<15; i++)
+			for(uint8_t i=0; i<16; i++)
 				symbols[i]=f_flt_buff[960+i*5];
-			symbols[15]=f_flt_buff[960+15*5];
 			float dist_str_b=eucl_norm(&symbols[8], str_sync_symbols, 8);
 			float dist_str=sqrtf(dist_str_a*dist_str_a+dist_str_b*dist_str_b);
-			//float dist_pkt=eucl_norm(&symbols[0], pkt_sync_symbols, 8);
 
 			//fwrite(&dist_str, 4, 1, fp);
 
@@ -1269,7 +1269,7 @@ int main(int argc, char* argv[])
 			}
 
 			//TODO: handle packet mode reception over RF
-			/*else if(dist_pkt<=5.0f && rx_state==RX_SYNCD)
+			else if(dist_pkt<=5.0f && rx_state==RX_SYNCD)
 			{
 				//find L2's minimum
 				uint8_t sample_offset=0;
@@ -1288,19 +1288,37 @@ int main(int argc, char* argv[])
 				}
 
 				float pld[SYM_PER_PLD];
+				uint8_t pkt_frame_data[25] = {0};
+				uint8_t eof = 0;
+				uint8_t pkt_fn = 0;
 				
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
-					pld[i]=f_flt_buff[16*5+i*5+sample_offset];
+					pld[i]=f_flt_buff[8*5+i*5+sample_offset];
 				}
 
-				time(&rawtime);
-				timeinfo=localtime(&rawtime);
+				//debug data dump
+				//fwrite((uint8_t*)&f_flt_buff[sample_offset], SYM_PER_FRA*5*sizeof(float), 1, fp);
 
-				dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
-					timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-				dbg_print(TERM_YELLOW, " RF PKT?\n");
-			}*/
+				/*uint32_t e = */decode_pkt_frame(pkt_frame_data, &eof, &pkt_fn, pld);
+
+				//TODO: this will only properly decode single-framed packets
+				if(eof==1 && CRC_M17(pkt_frame_data, strlen((char*)pkt_frame_data)+3)==0)
+				{
+					time(&rawtime);
+					timeinfo=localtime(&rawtime);
+
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_YELLOW, " RF PKT: ");
+					/*for(uint8_t i=0; i<25; i++)
+						dbg_print(0, "%02X ", pkt_frame_data[i]);
+					dbg_print(0, "\n");*/
+					dbg_print(0, "%s\n", (char*)&pkt_frame_data[1]);
+
+					//TODO: add code omitting the next N baseband samples (or something) to prevent multiple frame decodes
+				}
+			}
 			
 			//RX sync timeout
 			if(rx_state==RX_SYNCD)
