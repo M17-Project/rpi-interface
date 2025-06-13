@@ -130,7 +130,8 @@ enum tx_state_t tx_state=TX_IDLE;
 int8_t lsf_sync_ext[16];					//extended LSF syncword
 lsf_t lsf; 									//recovered LSF
 uint16_t sample_cnt=0;						//sample counter (for RX sync timeout)
-uint16_t fn, last_fn=0xFFFFU;				//current and last received FN
+uint16_t fn, last_fn=0xFFFFU;				//current and last received FN (stream mode)
+uint8_t pkt_fn, last_pkt_fn=0xFF;			//current and last received FN (packet mode)
 uint8_t lsf_b[30];							//raw decoded LSF
 uint8_t first_frame=1;						//first decoded frame after SYNC?
 uint8_t lich_parts=0;						//LICH chunks received (bit flags)
@@ -1290,7 +1291,6 @@ int main(int argc, char* argv[])
 				float pld[SYM_PER_PLD];
 				uint8_t pkt_frame_data[25] = {0};
 				uint8_t eof = 0;
-				uint8_t pkt_fn = 0;
 				
 				for(uint16_t i=0; i<SYM_PER_PLD; i++)
 				{
@@ -1303,8 +1303,11 @@ int main(int argc, char* argv[])
 				/*uint32_t e = */decode_pkt_frame(pkt_frame_data, &eof, &pkt_fn, pld);
 
 				//TODO: this will only properly decode single-framed packets
-				if(eof==1 && CRC_M17(pkt_frame_data, strlen((char*)pkt_frame_data)+3)==0)
+				if(last_pkt_fn==0xFF && eof==1 && CRC_M17(pkt_frame_data, strlen((char*)pkt_frame_data)+3)==0)
 				{
+					sample_cnt=0;		//reset rx timeout timer
+					last_pkt_fn=pkt_fn;
+
 					time(&rawtime);
 					timeinfo=localtime(&rawtime);
 
@@ -1330,6 +1333,7 @@ int main(int argc, char* argv[])
 					sample_cnt=0;
 					first_frame=1;
 					last_fn=0xFFFFU; //TODO: there's a small chance that this will cause problems (it's a valid frame number)
+					last_pkt_fn=0xFF;
 					lich_parts=0;
 					got_lsf=0;
 				}
