@@ -41,7 +41,7 @@
 #define DEBUG_HALT				while(1)
 
 #define MAX_UDP_LEN				65535
-#define ZMQ_RX_BUFF_SIZE		960											//how many RX baseband samples do we want to publish over ZMQ at once?
+#define ZMQ_RX_BUFF_SIZE		1024										//how many RX baseband samples do we want to publish over ZMQ at once?
 
 #define RX_SYMBOL_SCALING_COEFF	(1.0f/(0.8f/(40.0e3f/2097152*0xAD)*129.0f))	//CC1200 User's Guide, p. 24
 																			//0xAD is `DEVIATION_M`, 2097152=2^21
@@ -76,15 +76,16 @@ struct config_t
 	uint32_t uart_rate;
 	char node[10];
 	char refl_addr[20];
-	uint16_t port;
+	uint16_t refl_port;
 	char reflector[8];
-	uint8_t module;
+	char module;
 	uint8_t enc_node[6];
 	int16_t freq_corr;
 	float tx_pwr;
 	uint32_t rx_freq;
 	uint32_t tx_freq;
 	uint8_t afc;
+	uint16_t zmq_port;
 
 	//GPIO Pins
 	uint16_t pa_en;
@@ -141,6 +142,16 @@ uint8_t uart_byte_count;					//how many bytes are available on UART
 
 //timer for timeouts
 uint32_t tx_timer=0;
+
+//log traffic to file
+FILE* logfile = NULL;
+
+//ZMQ PUB for the baseband
+char zmq_addr[64];
+void *zmq_ctx;
+void *bsb_downlink;
+int8_t zmq_samp_buff[ZMQ_RX_BUFF_SIZE];
+uint16_t zmq_samples=0;
 
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
@@ -318,22 +329,23 @@ int8_t load_config(struct config_t *cfg, char *path)
 	char line[128];
 
 	//load defaults
-	sprintf(cfg->log_path, "/var/www/html/files/log.txt");
+	cfg->log_path[0]=0; //empty string - disabled
 	sprintf(cfg->uart, "/dev/ttyAMA0");
 	cfg->uart_rate=460800;
 	sprintf(cfg->node, "N0CALL H");
 	sprintf(cfg->refl_addr, "152.70.192.70");
-	cfg->port=17000;
+	cfg->refl_port=17000;
 	sprintf(cfg->reflector, "M17-M17");
 	cfg->module='A';
 	cfg->rx_freq=433475000U;
-	cfg->tx_freq=435000000U;
+	cfg->tx_freq=433475000U;
 	cfg->freq_corr=0;
 	cfg->tx_pwr=10.0f;
 	cfg->afc=0;
-	cfg->nrst=17;
+	cfg->zmq_port=0; //0 - disabled
+	cfg->nrst=21;
 	cfg->pa_en=18;
-	cfg->boot0=27;
+	cfg->boot0=20;
 
 	//overwrite settings
 	if(cfg_fp!=NULL)
@@ -372,7 +384,7 @@ int8_t load_config(struct config_t *cfg, char *path)
 			}
 			else if(strstr(line, "port")==line)
 			{
-				cfg->port=atoi(strstr(line, "=")+1);
+				cfg->refl_port=atoi(strstr(line, "=")+1);
 			}
 			else if(strstr(line, "reflector")==line)
 			{
@@ -421,6 +433,10 @@ int8_t load_config(struct config_t *cfg, char *path)
 				else
 					cfg->afc=0;
 			}
+			else if(strstr(line, "zmq_port")==line)
+			{
+				cfg->zmq_port=atoi(strstr(line, "=")+1);
+			}			
 		}
 
 		fclose(cfg_fp);
@@ -751,6 +767,12 @@ void sigint_handler(int val)
     // Clean up GPIO resources
     gpio_cleanup();
 
+	//close log file if necessary
+	if(logfile!=NULL)
+	{
+		fclose(logfile);
+	}
+
     dbg_print(TERM_YELLOW, "Exiting\n");
     exit(0);
 }
@@ -884,17 +906,22 @@ int main(int argc, char* argv[])
 	dbg_print(TERM_GREEN, "Starting up rpi-interface\n");
 
 	//check write access to the log file
-	//TODO: make logging optional
-	FILE* logfile=fopen((char*)config.log_path, "awb");
-	if(logfile!=NULL)
+	if(strlen(config.log_path)>0)
 	{
-		dbg_print(0, "Storing traffic in %s\n", config.log_path);
-		fclose(logfile);
+		logfile=fopen(config.log_path, "awb");
+		if(logfile!=NULL)
+		{
+			dbg_print(0, "Storing traffic in %s\n", config.log_path);
+		}
+		else
+		{
+			dbg_print(TERM_RED, "Cannot access %s\nExiting\n", config.log_path);
+			return 1;
+		}
 	}
 	else
 	{
-		dbg_print(TERM_RED, "Cannot access %s\nExiting\n", config.log_path);
-		return 1;
+		dbg_print(0, "Traffic logging disabled\n");
 	}
 
 	//------------------------------------gpio init------------------------------------
@@ -922,7 +949,7 @@ int main(int argc, char* argv[])
 	dbg_print(TERM_GREEN, " OK\n");
 
 	//PING-PONG test
-	dbg_print(0, "Device's reply to PING...");
+	dbg_print(0, "Radio board's reply to PING...");
 
 	dev_ping();
 	do
@@ -951,15 +978,15 @@ int main(int argc, char* argv[])
 	if(config.afc)
 		dbg_print(TERM_GREEN, "enabled\n");
 	else
-		dbg_print(TERM_YELLOW, "disabled\n");
+		dbg_print(TERM_GREEN, "disabled\n");
 
 	//-----------------------------------internet part-----------------------------------
-	dbg_print(0, "Connecting to %s", config.refl_addr);
+	dbg_print(0, "Connecting to %s:%d (%s) module %c as \"%s\"", config.refl_addr, config.refl_port, config.reflector, config.module, config.node);
 
 	//server
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = inet_addr(config.refl_addr);
-	serv_addr.sin_port = htons(config.port);
+	serv_addr.sin_port = htons(config.refl_port);
 
 	//Create a socket
 	sockt = socket(AF_INET, SOCK_DGRAM, 0);
@@ -985,15 +1012,21 @@ int main(int argc, char* argv[])
 	memcpy(&lsf_sync_ext[8], lsf_sync_symbols, 8);
 
 	//ZMQ
-	void *zmq_ctx = zmq_ctx_new();
-    void *bsb_downlink = zmq_socket(zmq_ctx, ZMQ_PUB);
 	dbg_print(0, "ZeroMQ ");
-	if(zmq_bind(bsb_downlink, "tcp://*:17017")==0) //TODO: make the port number configurable
-		dbg_print(TERM_GREEN, "OK\n");
+	if(config.zmq_port!=0)
+	{
+		sprintf(zmq_addr, "tcp://*:%d", config.zmq_port);
+		zmq_ctx = zmq_ctx_new();
+		bsb_downlink = zmq_socket(zmq_ctx, ZMQ_PUB);
+		if(zmq_bind(bsb_downlink, zmq_addr)==0)
+			dbg_print(TERM_GREEN, "OK\n");
+		else
+			dbg_print(TERM_RED, "ERROR\n");
+	}
 	else
-		dbg_print(TERM_RED, "ERROR\n");
-	int8_t zmq_samp_buff[ZMQ_RX_BUFF_SIZE];
-	uint16_t zmq_samples=0;
+	{
+		dbg_print(TERM_GREEN, "disabled\n");
+	}
 
 	//start RX
 	dev_start_rx();
@@ -1020,11 +1053,14 @@ int main(int argc, char* argv[])
 			read(fd, (uint8_t*)&rx_bsb_sample, 1);
 
 			//publish over ZMQ
-			zmq_samp_buff[zmq_samples++]=rx_bsb_sample;
-			if(zmq_samples==ZMQ_RX_BUFF_SIZE)
+			if(config.zmq_port!=0)
 			{
-				zmq_send(bsb_downlink, (char*)zmq_samp_buff, ZMQ_RX_BUFF_SIZE, 0);
-				zmq_samples=0;
+				zmq_samp_buff[zmq_samples++]=rx_bsb_sample;
+				if(zmq_samples==ZMQ_RX_BUFF_SIZE)
+				{
+					zmq_send(bsb_downlink, (char*)zmq_samp_buff, ZMQ_RX_BUFF_SIZE, 0);
+					zmq_samples=0;
+				}
 			}
 
 			//push buffer
@@ -1125,7 +1161,6 @@ int main(int argc, char* argv[])
 						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
 							call_dst, call_src, type, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 
-						FILE* logfile=fopen((char*)config.log_path, "awb");
 						if(logfile!=NULL)
 						{
 							time(&rawtime);
@@ -1133,7 +1168,6 @@ int main(int argc, char* argv[])
 							fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"%3.1f%%\"\n",
 								timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 								call_src, call_dst, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
-							fclose(logfile);
 						}
 					}
 				}
@@ -1217,7 +1251,6 @@ int main(int argc, char* argv[])
 								dbg_print(TERM_YELLOW, "LSF REC: DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d)\n",
 									call_dst, call_src, type, can);
 
-								FILE* logfile=fopen((char*)config.log_path, "awb");
 								if(logfile!=NULL)
 								{
 									time(&rawtime);
@@ -1225,7 +1258,6 @@ int main(int argc, char* argv[])
 									fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"RF\" \"%d\" \"--\"\n",
 										timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 										call_src, call_dst, can);
-									fclose(logfile);
 								}
 							}
 							else
@@ -1419,7 +1451,6 @@ int main(int argc, char* argv[])
             		m17stream.lsf.crc[1]=ccrc&0xFF;
 
 					//log to file
-					FILE* logfile=fopen((char*)config.log_path, "awb");
 					if(logfile!=NULL)
 					{
 						time(&rawtime);
@@ -1427,7 +1458,6 @@ int main(int argc, char* argv[])
 						fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
 							timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 							src_call, dst_call);
-						fclose(logfile);
 					}
 
 					//stop RX, set PA_EN=1 and initialize TX
@@ -1566,7 +1596,6 @@ int main(int argc, char* argv[])
 					fprintf(logfile, "\"%02d:%02d:%02d\" \"%s\" \"%s\" \"Internet\" \"--\" \"--\"\n",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec,
 						call_src, call_dst);
-					fclose(logfile);
 				}
 				
 				time(&rawtime);
