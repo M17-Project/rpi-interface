@@ -342,79 +342,79 @@ int8_t load_config(struct config_t *cfg, char *path)
 		while(fgets((char*)line, sizeof(line), cfg_fp)>(char*)0)
 		{
 			uint8_t len;
-			if(strstr(line, "log_path")!=NULL)
+			if(strstr(line, "log_path")==line)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->log_path, strstr(line, "\"")+1, len);
 				cfg->log_path[len]=0;
 			}
-			else if(strstr(line, "device")!=NULL)
+			else if(strstr(line, "device")==line)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->uart, strstr(line, "\"")+1, len);
 				cfg->uart[len]=0;
 			}
-			else if(strstr(line, "speed")!=NULL)
+			else if(strstr(line, "speed")==line)
 			{
 				cfg->uart_rate=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "node")!=NULL)
+			else if(strstr(line, "node")==line)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->node, strstr(line, "\"")+1, len);
 				cfg->node[len]=0;
 			}
-			else if(strstr(line, "ipv4")!=NULL)
+			else if(strstr(line, "ipv4")==line)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->refl_addr, strstr(line, "\"")+1, len);
 				cfg->refl_addr[len]=0;
 			}
-			else if(strstr(line, "port")!=NULL)
+			else if(strstr(line, "port")==line)
 			{
 				cfg->port=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "reflector")!=NULL)
+			else if(strstr(line, "reflector")==line)
 			{
 				len=strstr(strstr(line, "\"")+1, "\"")-strstr(line, "\"")-1;
 				memcpy(cfg->reflector, strstr(line, "\"")+1, len);
 				cfg->reflector[len]=0;
 			}
-			else if(strstr(line, "module")!=NULL)
+			else if(strstr(line, "module")==line)
 			{
 				cfg->module=*(strstr(line, "\"")+1);
 			}
 
-			else if(strstr(line, "nrst")!=NULL)
+			else if(strstr(line, "nrst")==line)
 			{
 				cfg->nrst=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "pa_en")!=NULL)
+			else if(strstr(line, "pa_en")==line)
 			{
 				cfg->pa_en=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "boot0")!=NULL)
+			else if(strstr(line, "boot0")==line)
 			{
 				cfg->boot0=atoi(strstr(line, "=")+1);
 			}
 
-			else if(strstr(line, "tx_freq")!=NULL)
+			else if(strstr(line, "tx_freq")==line)
 			{
 				cfg->tx_freq=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "rx_freq")!=NULL)
+			else if(strstr(line, "rx_freq")==line)
 			{
 				cfg->rx_freq=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "freq_corr")!=NULL)
+			else if(strstr(line, "freq_corr")==line)
 			{
 				cfg->freq_corr=atoi(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "tx_pwr")!=NULL)
+			else if(strstr(line, "tx_pwr")==line)
 			{
 				cfg->tx_pwr=atof(strstr(line, "=")+1);
 			}
-			else if(strstr(line, "afc")!=NULL)
+			else if(strstr(line, "afc")==line)
 			{
 				if(*(strstr(line, "=")+1)=='1')
 					cfg->afc=1;
