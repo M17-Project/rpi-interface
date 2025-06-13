@@ -1318,8 +1318,6 @@ int main(int argc, char* argv[])
 						dbg_print(0, "%02X ", pkt_frame_data[i]);
 					dbg_print(0, "\n");*/
 					dbg_print(0, "%s\n", (char*)&pkt_frame_data[1]);
-
-					//TODO: add code omitting the next N baseband samples (or something) to prevent multiple frame decodes
 				}
 			}
 			
