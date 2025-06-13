@@ -153,6 +153,8 @@ void *bsb_downlink;
 int8_t zmq_samp_buff[ZMQ_RX_BUFF_SIZE];
 uint16_t zmq_samples=0;
 
+time_t last_refl_ping;
+
 //debug printf
 void dbg_print(const char* color_code, const char* fmt, ...)
 {
@@ -613,7 +615,8 @@ void dev_set_rx_freq(uint32_t freq)
 	
 	if(resp[2]==0)
 	{
-		dbg_print(0, "RX frequency: %lu Hz\n", config.rx_freq); //OK
+		dbg_print(0, "RX frequency: ");
+		dbg_print(TERM_GREEN, "%lu Hz\n", config.rx_freq); //OK
 	}
 	else
 	{
@@ -640,7 +643,8 @@ void dev_set_tx_freq(uint32_t freq)
 	
 	if(resp[2]==0)
 	{
-		dbg_print(0, "TX frequency: %lu Hz\n", config.tx_freq); //OK
+		dbg_print(0, "TX frequency: ");
+		dbg_print(TERM_GREEN, "%lu Hz\n", config.tx_freq); //OK
 	}
 	else
 	{
@@ -667,11 +671,12 @@ void dev_set_freq_corr(int16_t corr)
 	
 	if(resp[2]==0)
 	{
-		dbg_print(0, "Frequency correction: %d\n", config.freq_corr); //OK
+		dbg_print(0, "Frequency correction: ");
+		dbg_print(TERM_GREEN, "%d\n", config.freq_corr); //OK
 	}
 	else
 	{
-		dbg_print(TERM_YELLOW, "Error %d setting frequency correction: %d\n", resp[2], config.freq_corr); //OK //error
+		dbg_print(TERM_YELLOW, "Error %d setting frequency correction: %d\n", resp[2], config.freq_corr); //error
 	}
 }
 
@@ -722,7 +727,8 @@ void dev_set_tx_power(float power) //powr in dBm
 	
 	if(resp[2]==0)
 	{
-		dbg_print(0, "TX power: %2.2f dBm\n", config.tx_pwr); //OK
+		dbg_print(0, "TX power: ");
+		dbg_print(TERM_GREEN, "%2.2f dBm\n", config.tx_pwr); //OK
 	}
 	else
 	{
@@ -774,7 +780,7 @@ void sigint_handler(int val)
 	}
 
     dbg_print(TERM_YELLOW, "Exiting\n");
-    exit(0);
+    exit(EXIT_SUCCESS);
 }
 
 //samples per symbol (sps) = 5
@@ -921,7 +927,8 @@ int main(int argc, char* argv[])
 	}
 	else
 	{
-		dbg_print(0, "Traffic logging disabled\n");
+		dbg_print(0, "Traffic logging ");
+		dbg_print(TERM_GREEN, "disabled\n");
 	}
 
 	//------------------------------------gpio init------------------------------------
@@ -1043,6 +1050,8 @@ int main(int argc, char* argv[])
 
 	//file for debug data dumping
 	//FILE *fp=fopen("test_dump.bin", "wb");
+
+	last_refl_ping = time(NULL);
 
 	while(1)
 	{
@@ -1382,6 +1391,7 @@ int main(int argc, char* argv[])
 			//PING-PONG
 			if(strstr((char*)rx_buff, "PING")==(char*)rx_buff)
 			{
+				last_refl_ping = time(NULL);
 				sprintf((char*)tx_buff, "PONGxxxxxx"); //that "xxxxxx" is just a placeholder
 				memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
 				refl_send(tx_buff, 4+6); //PONG
@@ -1710,6 +1720,24 @@ int main(int argc, char* argv[])
 			dbg_print(TERM_GREEN, " RX start\n");
 
 			tx_state=TX_IDLE;
+		}
+
+		//connection with the reflector borken
+		if(time(NULL)-last_refl_ping>30)
+		{
+			//for now, just cry about it and quit
+			dbg_print(TERM_RED, "Lost connection with the reflector\nExiting");
+
+			//cleanup gpios
+			gpio_cleanup();
+
+			//close log file if necessary
+			if(logfile!=NULL)
+			{
+				fclose(logfile);
+			}
+
+			exit(EXIT_FAILURE);
 		}
 	}
 	
