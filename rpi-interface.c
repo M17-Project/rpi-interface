@@ -1355,9 +1355,9 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					dbg_print(TERM_YELLOW, " RF PKT: ");
-					for(uint8_t i=0; i<25; i++)
+					/*for(uint8_t i=0; i<25; i++)
 						dbg_print(0, "%02X ", pkt_frame_data[i]);
-					dbg_print(0, "\n");
+					dbg_print(0, "\n");*/
 					dbg_print(0, "%s\n", (char*)&pkt_frame_data[1]);
 					uint8_t refl_pld[4+sizeof(lsf)+strlen((char*)pkt_frame_data)+3];					//single frame
 					sprintf((char*)&refl_pld[0], "M17P");						//MAGIC
