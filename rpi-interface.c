@@ -1151,24 +1151,24 @@ int main(int argc, char* argv[])
 
 					last_fn=0xFFFFU;
 
-					m17stream.fn=0;
-					m17stream.sid=rand()%0x10000U;
+					dbg_print(TERM_GREEN, " CRC OK ");
+					dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
+						call_dst, call_src, type, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 
-					uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
-					sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
-					*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
-					memcpy(&refl_pld[6], &lsf, 224/8);							//LSD
-					*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
-					memset(&refl_pld[36], 0, 128/8);							//payload (zeros, because this is LSF)
-					uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
-					*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
-					refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
-
-					//if(*((uint16_t*)lsf.type)&1) //if stream
+					if(*((uint16_t*)lsf.type)&1) //if stream
 					{
-						dbg_print(TERM_GREEN, " CRC OK ");
-						dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
-							call_dst, call_src, type, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
+						m17stream.fn=0;
+						m17stream.sid=rand()%0x10000U;
+
+						uint8_t refl_pld[(32+16+224+16+128+16)/8];					//single frame
+						sprintf((char*)&refl_pld[0], "M17 ");						//MAGIC
+						*((uint16_t*)&refl_pld[4])=m17stream.sid;					//SID
+						memcpy(&refl_pld[6], &lsf, 224/8);							//LSD
+						*((uint16_t*)&refl_pld[34])=m17stream.fn;					//FN
+						memset(&refl_pld[36], 0, 128/8);							//payload (zeros, because this is LSF)
+						uint16_t crc_val=CRC_M17(refl_pld, 52);						//CRC
+						*((uint16_t*)&refl_pld[52])=(crc_val>>8)|(crc_val<<8);		//endianness swap
+						refl_send(refl_pld, sizeof(refl_pld));						//send a single frame to the reflector
 
 						if(logfile!=NULL)
 						{
@@ -1355,10 +1355,26 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
 						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 					dbg_print(TERM_YELLOW, " RF PKT: ");
-					/*for(uint8_t i=0; i<25; i++)
+					for(uint8_t i=0; i<25; i++)
 						dbg_print(0, "%02X ", pkt_frame_data[i]);
-					dbg_print(0, "\n");*/
+					dbg_print(0, "\n");
 					dbg_print(0, "%s\n", (char*)&pkt_frame_data[1]);
+					uint8_t refl_pld[4+sizeof(lsf)+strlen((char*)pkt_frame_data)+3];					//single frame
+					sprintf((char*)&refl_pld[0], "M17P");						//MAGIC
+					memcpy(&refl_pld[4], &lsf, sizeof(lsf));					//LSF
+					memcpy(&refl_pld[34], &pkt_frame_data, strlen((char*)pkt_frame_data)+3); //PKT data + CRC
+					/*debug logging
+					time(&rawtime);
+					timeinfo=localtime(&rawtime);
+
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
+						timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_YELLOW, " refl_pld: ");
+					for(uint8_t i=0; i<sizeof(refl_pld); i++)
+						dbg_print(0, "%02X ", refl_pld[i]);
+					dbg_print(0, "\n");
+					*/
+					refl_send(refl_pld, 4+sizeof(lsf)+strlen((char*)pkt_frame_data)+3);						//send to the reflector
 				}
 			}
 			
