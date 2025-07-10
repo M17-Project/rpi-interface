@@ -1514,7 +1514,7 @@ int main(int argc, char* argv[])
 					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
 
 					//finally, the first frame
-					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
 
 					//filter and send out to the device
 					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
@@ -1523,7 +1523,7 @@ int main(int argc, char* argv[])
 				else
 				{
 					//only one frame is needed
-					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), m17stream.fn%6, m17stream.fn);
+					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
 
 					//filter and send out to the device
 					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
@@ -1543,15 +1543,7 @@ int main(int argc, char* argv[])
 
 				if(m17stream.fn&0x8000U) //last stream frame
 				{
-					//two frames need to be sent - last stream frame and EOT marker
-					//last frame
-					gen_frame_i8(frame_symbols, m17stream.pld, FRAME_STR, &(m17stream.lsf), (m17stream.fn&0x7FFFU)%6, m17stream.fn);
-
-					//filter and send out to the device
-					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5, 0);
-					write(fd, (uint8_t*)bsb_samples, sizeof(bsb_samples));
-
-					//now the final EOT marker
+					//send the final EOT marker
 					uint32_t frame_buff_cnt=0;
 					gen_eot_i8(frame_symbols, &frame_buff_cnt);
 
