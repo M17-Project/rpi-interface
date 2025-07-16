@@ -1155,7 +1155,7 @@ int main(int argc, char* argv[])
 					dbg_print(TERM_YELLOW, "| DST: %-9s | SRC: %-9s | TYPE: %04X (CAN=%d) | MER: %-3.1f%%\n",
 						call_dst, call_src, type, can, (float)e/0xFFFFU/SYM_PER_PLD/2.0f*100.0f);
 
-					if(*((uint16_t*)lsf.type)&1) //if stream
+					if(type&1) //if stream
 					{
 						m17stream.fn=0;
 						m17stream.sid=rand()%0x10000U;
