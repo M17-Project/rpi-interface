@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- *  Edited on: Jun 13, 2025
+ *  Edited on: Jul 16, 2025
  *     Author: Wojciech Kaczmarski, SP5WWP
  *             M17 Foundation
  */
