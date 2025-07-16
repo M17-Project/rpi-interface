@@ -576,15 +576,13 @@ uint8_t gpio_set(uint16_t gpio, uint8_t state)
 }
 
 //M17 stuff
-uint8_t refl_send(const uint8_t* msg, uint16_t len)
+void refl_send(const uint8_t* msg, uint16_t len)
 {
 	if(sendto(sockt, msg, len, 0, (const struct sockaddr*)&serv_addr, sizeof(serv_addr))<0)
-    {
-        dbg_print(TERM_RED, " Error connecting with reflector.\nExiting.\n");
-        return 1;
-    }
-
-	return 0;
+	{
+		dbg_print(TERM_RED, "\nError while sending data to reflector.\nExiting.\n");
+		exit(EXIT_FAILURE);
+	}
 }
 
 //device config funcs
@@ -764,7 +762,7 @@ void dev_stop_rx(void)
 
 void sigint_handler(int val)
 {
-    if(val){}; //get rid of unused variable warning
+    (void)val; //get rid of unused variable warning
     dbg_print(TERM_YELLOW, "\nSIGINT caught, disconnecting\n");
     sprintf((char*)tx_buff, "DISCxxxxxx"); //that "xxxxxx" is just a placeholder
     memcpy(&tx_buff[4], config.enc_node, sizeof(config.enc_node));
