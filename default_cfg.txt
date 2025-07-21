@@ -3,7 +3,7 @@
 device="/dev/ttyAMA0"                   #UART port to use
 speed=460800                            #UART's speed
 node="N0CALL H"                         #callsign with a suffix
-ipv4="152.70.192.70"                    #reflector's IPv4 address
+ipv4="107.191.121.105"                  #reflector's IPv4 address
 port=17000                              #reflector's port
 reflector="M17-M17"                     #reflector name
 module="A"                              #module, single letter
