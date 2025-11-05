@@ -43,11 +43,11 @@
 #define MAX_UDP_LEN				65535
 #define ZMQ_RX_BUFF_SIZE		1024										//how many RX baseband samples do we want to publish over ZMQ at once?
 
-#define RX_SYMBOL_SCALING_COEFF	(1.0f/(0.8f/(40.0e3f/2097152*0xAD)*129.0f))	//CC1200 User's Guide, p. 24
+#define RX_SYMBOL_SCALING_COEFF	(1.0f/(0.8f/(40.0e3f/2097152*0xAD)*130.0f))	//CC1200 User's Guide, p. 24
 																			//0xAD is `DEVIATION_M`, 2097152=2^21
 																			//+1.0 is the symbol for +0.8kHz
 																			//40.0e3 is F_TCXO in kHz
-																			//129 is `CFM_RX_DATA_OUT` register value at max. F_DEV
+																			//129 is `CFM_RX_DATA_OUT` register value at max. F_DEV (130 is 1 off but offers a better symbol map)
 																			//datasheet might have this wrong (it says 64)
 #define TX_SYMBOL_SCALING_COEFF	(0.8f/((40.0e3f/2097152)*0xAD)*64.0f)		//0xAD is `DEVIATION_M`, 2097152=2^21
 																			//+0.8kHz is the deviation for symbol +1
