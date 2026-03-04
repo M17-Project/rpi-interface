@@ -1,7 +1,7 @@
 /*
  * rpi-interface.c
  *
- * Edited on: Mar 3, 2026
+ * Edited on: Mar 4, 2026
  * Author: Wojciech Kaczmarski, SP5WWP
  *         M17 Foundation
  */
@@ -596,6 +596,26 @@ void refl_send(const uint8_t *msg, uint16_t len)
 }
 
 // device config funcs
+/*void uart_wait_quiet(void)
+{
+	uint8_t tmp;
+	int idle = 0;
+
+	int flags = fcntl(fd, F_GETFL);
+	fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+	while (idle < 20)
+	{
+		int r = read(fd, &tmp, 1);
+		if (r <= 0)
+			idle++;
+		else
+			idle = 0;
+	}
+
+	fcntl(fd, F_SETFL, flags);
+}*/
+
 int8_t dev_ping(void)
 {
 	uint8_t cid = CMD_PING;
@@ -941,6 +961,9 @@ int8_t dev_stop_rx(void) // stop reception
 	uart_lock = 1;		   // prevent main loop from reading
 	tcflush(fd, TCIFLUSH); // clear leftover bytes
 
+	uart_rx_sync = 0;
+	rx_buff_cnt = 0;
+
 	write(fd, cmd, 4);
 
 	int rd = 0;
@@ -1143,7 +1166,7 @@ int main(int argc, char *argv[])
 		dbg_print(0, "Device reset...");
 		uint8_t gpio_err = 0;
 		gpio_init(argv[0]);
-		gpio_err |= gpio_set(config.boot0, 0); // all pins should be at logic low already, but better be safe than sorry
+		gpio_err |= gpio_set(config.boot0, 0); // all pins should be at logic low already, but better safe than sorry
 		gpio_err |= gpio_set(config.pa_en, 0);
 		gpio_err |= gpio_set(config.nrst, 0);
 		usleep(250000U); // 250ms
@@ -1208,7 +1231,7 @@ int main(int argc, char *argv[])
 	dbg_print(0, "GPIO init...");
 	uint8_t gpio_err = 0;
 	gpio_init(argv[0]);
-	gpio_err |= gpio_set(config.nrst, 0); // both pins should be at logic low already, but better be safe than sorry
+	gpio_err |= gpio_set(config.nrst, 0); // pin should be logic low already, but better safe than sorry
 	usleep(250000U);					  // 250ms
 	gpio_err |= gpio_set(config.nrst, 1);
 	usleep(2000000U); // 2s for device boot-up
@@ -1234,7 +1257,7 @@ int main(int argc, char *argv[])
 	// config the device
 	dev_set_rx_freq(config.rx_freq);
 	dev_set_tx_freq(config.tx_freq);
-	//dev_set_freq_corr(config.freq_corr);
+	// dev_set_freq_corr(config.freq_corr);
 	dev_set_tx_power(config.tx_pwr);
 	dev_set_afc(config.afc);
 
@@ -1745,11 +1768,6 @@ int main(int argc, char *argv[])
 				{
 					tx_state = TX_ACTIVE;
 
-					// TODO: this needs to happen every time a new transmission appears
-					// dev_stop_rx();
-					// dbg_print(0, "RX stop\n");
-					usleep(10e3);
-
 					// extract data
 					memcpy(m17stream.lsf.dst, "\xFF\xFF\xFF\xFF\xFF\xFF", 6);
 					memcpy(m17stream.lsf.src, &rx_buff[6 + 6], 6);
@@ -1808,13 +1826,13 @@ int main(int argc, char *argv[])
 					dbg_print(TERM_GREEN, " Stream TX start\n");
 
 					// stop RX, set PA_EN=1 and initialize TX
-					while (dev_stop_rx() != 0)
-						usleep(40e3);
-					usleep(2e3);
-					gpio_set(config.pa_en, 1);
-					while (dev_start_tx() != 0)
-						usleep(40e3);
-					usleep(10e3);
+					dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
+							  timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+					dbg_print(TERM_GREEN, " RX stop\n");
+					dev_stop_rx();
+					usleep(25e3);
+					//gpio_set(config.pa_en, 1);
+					dev_start_tx();
 
 					// flush the RRC baseband filter
 					filter_symbols(NULL, NULL, NULL, 0);
@@ -1960,13 +1978,10 @@ int main(int argc, char *argv[])
 				dbg_print(TERM_GREEN, " Packet TX start\n");
 
 				// stop RX, set PA_EN=1 and initialize TX
-				while (dev_stop_rx() != 0)
-					usleep(40e3);
-				usleep(2e3);
-				gpio_set(config.pa_en, 1);
-				while (dev_start_tx() != 0)
-					usleep(40e3);
-				usleep(10e3);
+				dev_stop_rx();
+				usleep(25e3);
+				//gpio_set(config.pa_en, 1);
+				dev_start_tx();
 
 				// flush the RRC baseband filter
 				filter_symbols(NULL, NULL, NULL, 0);
@@ -1980,7 +1995,7 @@ int main(int argc, char *argv[])
 				// filter and send out to the device
 				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5_poly, 0);
 				memcpy(&bsb_chunk[3], bsb_samples, sizeof(bsb_samples));
-				write(fd, bsb_samples, sizeof(bsb_samples));
+				write(fd, bsb_chunk, sizeof(bsb_chunk));
 
 				// now the LSF
 				gen_frame_i8(frame_symbols, NULL, FRAME_LSF, (lsf_t *)&rx_buff[4], 0, 0);
@@ -1988,7 +2003,7 @@ int main(int argc, char *argv[])
 				// filter and send out to the device
 				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5_poly, 0);
 				memcpy(&bsb_chunk[3], bsb_samples, sizeof(bsb_samples));
-				write(fd, bsb_samples, sizeof(bsb_samples));
+				write(fd, bsb_chunk, sizeof(bsb_chunk));
 
 				// packet frames
 				uint16_t pld_len = rx_len - (4 + 240 / 8); //"M17P" plus 240-bit LSD
@@ -2002,7 +2017,7 @@ int main(int argc, char *argv[])
 					gen_frame_i8(frame_symbols, pld, FRAME_PKT, NULL, 0, 0);
 					filter_symbols(bsb_samples, frame_symbols, rrc_taps_5_poly, 0);
 					memcpy(&bsb_chunk[3], bsb_samples, sizeof(bsb_samples));
-					write(fd, bsb_samples, sizeof(bsb_samples));
+					write(fd, bsb_chunk, sizeof(bsb_chunk));
 					pld_len -= 25;
 					frame++;
 					usleep(40 * 1000U);
@@ -2013,7 +2028,7 @@ int main(int argc, char *argv[])
 				gen_frame_i8(frame_symbols, pld, FRAME_PKT, NULL, 0, 0);
 				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5_poly, 0);
 				memcpy(&bsb_chunk[3], bsb_samples, sizeof(bsb_samples));
-				write(fd, bsb_samples, sizeof(bsb_samples));
+				write(fd, bsb_chunk, sizeof(bsb_chunk));
 				usleep(40 * 1000U);
 
 				// now the final EOT marker
@@ -2023,7 +2038,7 @@ int main(int argc, char *argv[])
 				// filter and send out to the device
 				filter_symbols(bsb_samples, frame_symbols, rrc_taps_5_poly, 0);
 				memcpy(&bsb_chunk[3], bsb_samples, sizeof(bsb_samples));
-				write(fd, bsb_samples, sizeof(bsb_samples));
+				write(fd, bsb_chunk, sizeof(bsb_chunk));
 
 				time(&rawtime);
 				timeinfo = localtime(&rawtime);
@@ -2067,10 +2082,8 @@ int main(int argc, char *argv[])
 			gpio_set(config.pa_en, 0);
 
 			// restart RX
-			while (dev_stop_tx() != 0)
-				usleep(40e3);
-			while (dev_start_rx() != 0)
-				usleep(40e3);
+			dev_stop_tx();
+			dev_start_rx();
 			time(&rawtime);
 			timeinfo = localtime(&rawtime);
 			dbg_print(TERM_SKYBLUE, "[%02d:%02d:%02d]",
@@ -2102,4 +2115,3 @@ int main(int argc, char *argv[])
 	// should never get here
 	return 0;
 }
-
