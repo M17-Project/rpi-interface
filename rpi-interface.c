@@ -1831,7 +1831,7 @@ int main(int argc, char *argv[])
 					dbg_print(TERM_GREEN, " RX stop\n");
 					dev_stop_rx();
 					usleep(25e3);
-					//gpio_set(config.pa_en, 1);
+					gpio_set(config.pa_en, 1);
 					dev_start_tx();
 
 					// flush the RRC baseband filter
@@ -1980,7 +1980,7 @@ int main(int argc, char *argv[])
 				// stop RX, set PA_EN=1 and initialize TX
 				dev_stop_rx();
 				usleep(25e3);
-				//gpio_set(config.pa_en, 1);
+				gpio_set(config.pa_en, 1);
 				dev_start_tx();
 
 				// flush the RRC baseband filter
